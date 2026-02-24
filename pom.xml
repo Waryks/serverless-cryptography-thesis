@@ -8,9 +8,6 @@
     <packaging>pom</packaging>
 
     <modules>
-        <module>producer-lambda</module>
-        <module>consumer-lambda</module>
-        <module>benchmark-client</module>
         <module>benchmark-client</module>
         <module>commons</module>
         <module>consumer-lambda</module>
@@ -25,7 +22,8 @@
         <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
         <quarkus.platform.version>3.13.3</quarkus.platform.version>
 
-        <aws.sdk.version>2.25.55</aws.sdk.version>
+        <aws.sdk2.version>2.25.55</aws.sdk2.version>
+        <quarkus.amazon.services.version>3.3.1</quarkus.amazon.services.version>
     </properties>
 
     <dependencyManagement>
@@ -34,6 +32,22 @@
                 <groupId>${quarkus.platform.group-id}</groupId>
                 <artifactId>${quarkus.platform.artifact-id}</artifactId>
                 <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${aws.sdk2.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
+            <dependency>
+                <groupId>io.quarkiverse.amazonservices</groupId>
+                <artifactId>quarkus-amazon-services-bom</artifactId>
+                <version>${quarkus.amazon.services.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
