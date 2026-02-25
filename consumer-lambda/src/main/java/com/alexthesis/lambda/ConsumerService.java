@@ -3,6 +3,8 @@ package com.alexthesis.lambda;
 import com.alexthesis.crypto.KeySecret;
 import com.alexthesis.crypto.SecretService;
 import com.alexthesis.crypto.VerificationService;
+import com.alexthesis.dynamo.DedupRepository;
+import com.alexthesis.dynamo.LedgerRepository;
 import com.alexthesis.messaging.SignedContent;
 import com.alexthesis.messaging.SignedEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,16 +26,22 @@ public class ConsumerService {
 
     private final SecretService secretService;
     private final VerificationService verificationService;
+    private final DedupRepository dedupRepository;
+    private final LedgerRepository ledgerRepository;
     private final boolean replayCheckEnabled;
     private final long replayWindowMs;
 
     @Inject
     public ConsumerService(SecretService secretService,
                            VerificationService verificationService,
+                           DedupRepository dedupRepository,
+                           LedgerRepository ledgerRepository,
                            @ConfigProperty(name = "thesis.replay-check.enabled", defaultValue = "true") boolean replayCheckEnabled,
                            @ConfigProperty(name = "thesis.replay-check.window-ms", defaultValue = "300000") long replayWindowMs) {
         this.secretService = secretService;
         this.verificationService = verificationService;
+        this.dedupRepository = dedupRepository;
+        this.ledgerRepository = ledgerRepository;
         this.replayCheckEnabled = replayCheckEnabled;
         this.replayWindowMs = replayWindowMs;
     }
@@ -63,8 +71,8 @@ public class ConsumerService {
 
         processWindow(content);
 
-        // TODO:
-        // 5. Write to DynamoDB (ledger + dedup table)
+        dedupRepository.checkAndInsert(content);
+        ledgerRepository.save(content);
 
         log.info("Processed message with eventId: " + content.eventId()
                 + " algorithm: " + content.algorithm());

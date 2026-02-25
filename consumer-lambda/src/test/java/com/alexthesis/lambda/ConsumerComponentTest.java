@@ -11,6 +11,9 @@ import io.quarkus.test.InjectMock;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.PutItemResponse;
 import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
@@ -49,6 +52,9 @@ class ConsumerComponentTest {
     @InjectMock
     SecretsManagerClient secretsManagerClient;
 
+    @InjectMock
+    DynamoDbClient dynamoDbClient;
+
     @Test
     void processMessage_hmac_validSignatureIsAccepted() throws Exception {
         String keyId = "hmac-key-1";
@@ -58,6 +64,7 @@ class ConsumerComponentTest {
         String signatureB64 = signHmac(content, keyB64);
 
         stubSecretsManager(keyId, Algorithm.HMAC_SHA256, keyB64);
+        stubDynamoDb();
         assertThatCode(() -> consumerService.processMessage(toJson(content, signatureB64)))
                 .doesNotThrowAnyException();
     }
@@ -69,6 +76,7 @@ class ConsumerComponentTest {
 
         SignedContent content = buildContent("evt-hmac-2", Algorithm.HMAC_SHA256, keyId);
         stubSecretsManager(keyId, Algorithm.HMAC_SHA256, keyB64);
+        stubDynamoDb();
 
         assertThatThrownBy(() -> consumerService.processMessage(toJson(content, "aW52YWxpZA==")))
                 .isInstanceOf(ConsumerService.InvalidSignatureException.class);
@@ -83,6 +91,7 @@ class ConsumerComponentTest {
         String signatureB64 = signRsaPss(content, keys.privateKeyB64());
 
         stubSecretsManager(keyId, Algorithm.RSA_PSS_SHA256, keys.publicKeyB64());
+        stubDynamoDb();
         assertThatCode(() -> consumerService.processMessage(toJson(content, signatureB64)))
                 .doesNotThrowAnyException();
     }
@@ -96,6 +105,7 @@ class ConsumerComponentTest {
         String signatureB64 = signEcdsa(content, keys.privateKeyB64());
 
         stubSecretsManager(keyId, Algorithm.ECDSA_P256_SHA256, keys.publicKeyB64());
+        stubDynamoDb();
         assertThatCode(() -> consumerService.processMessage(toJson(content, signatureB64)))
                 .doesNotThrowAnyException();
     }
@@ -110,6 +120,7 @@ class ConsumerComponentTest {
         String signatureB64 = signHmac(content, keyB64);
 
         stubSecretsManager(keyId, Algorithm.HMAC_SHA256, keyB64);
+        stubDynamoDb();
         assertThatThrownBy(() -> consumerService.processMessage(toJson(content, signatureB64)))
                 .isInstanceOf(ConsumerService.ReplayWindowException.class);
     }
@@ -120,6 +131,10 @@ class ConsumerComponentTest {
                 .secretString(MAPPER.writeValueAsString(secret))
                 .build();
         when(secretsManagerClient.getSecretValue(any(GetSecretValueRequest.class))).thenReturn(response);
+    }
+
+    private void stubDynamoDb() {
+        when(dynamoDbClient.putItem(any(PutItemRequest.class))).thenReturn(PutItemResponse.builder().build());
     }
 
     private SignedContent buildContent(String eventId, Algorithm algorithm, String keyId) {

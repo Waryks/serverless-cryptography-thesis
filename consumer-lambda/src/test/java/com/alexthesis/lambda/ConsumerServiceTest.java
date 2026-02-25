@@ -3,6 +3,8 @@ package com.alexthesis.lambda;
 import com.alexthesis.crypto.KeySecret;
 import com.alexthesis.crypto.SecretService;
 import com.alexthesis.crypto.VerificationService;
+import com.alexthesis.dynamo.DedupRepository;
+import com.alexthesis.dynamo.LedgerRepository;
 import com.alexthesis.messaging.Algorithm;
 import com.alexthesis.messaging.SignedContent;
 import com.alexthesis.messaging.SignedEvent;
@@ -32,12 +34,14 @@ class ConsumerServiceTest {
 
     @Mock SecretService secretService;
     @Mock VerificationService verificationService;
+    @Mock DedupRepository dedupRepository;
+    @Mock LedgerRepository ledgerRepository;
 
     private ConsumerService consumerService;
 
     @BeforeEach
     void setUp() {
-        consumerService = new ConsumerService(secretService, verificationService, true, 300_000L);
+        consumerService = new ConsumerService(secretService, verificationService, dedupRepository, ledgerRepository, true, 300_000L);
     }
 
     @Test
@@ -97,7 +101,7 @@ class ConsumerServiceTest {
 
     @Test
     void processMessage_replayCheckDisabled_expiredTimestampDoesNotThrow() throws Exception {
-        consumerService = new ConsumerService(secretService, verificationService, false, 300_000L);
+        consumerService = new ConsumerService(secretService, verificationService, dedupRepository, ledgerRepository, false, 300_000L);
         long expiredTimestamp = System.currentTimeMillis() - 400_000L;
         String body = buildMessageBody("evt-old", Algorithm.HMAC_SHA256, "key-1", expiredTimestamp);
         when(secretService.getSecret("key-1")).thenReturn(DUMMY_SECRET);
