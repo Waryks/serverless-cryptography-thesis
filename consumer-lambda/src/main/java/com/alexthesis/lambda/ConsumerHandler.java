@@ -1,6 +1,5 @@
 package com.alexthesis.lambda;
 
-import com.alexthesis.service.ConsumerService;
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
 import com.amazonaws.services.lambda.runtime.events.SQSEvent;
