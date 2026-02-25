@@ -7,6 +7,8 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.Put;
+import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 
 import java.util.Map;
 
@@ -47,20 +49,38 @@ public class LedgerRepository extends DynamoRepository {
 
     /**
      * Writes a ledger entry for the supplied {@code content}.
+     * Used for standalone ledger writes (e.g. in tests).
      *
      * @param content the verified event content to record
      */
     public void save(SignedContent content) {
-        Map<String, AttributeValue> item = Map.of(
+        putItem(buildItem(content));
+        log.debugf("Ledger entry saved for eventId: %s", content.eventId());
+    }
+
+    /**
+     * Builds a {@link TransactWriteItem} for use inside a {@code TransactWriteItems} request.
+     *
+     * @param content the verified event content to record
+     * @return a transact-write item ready to be combined with other items in the same transaction
+     */
+    public TransactWriteItem buildTransactItem(SignedContent content) {
+        return TransactWriteItem.builder()
+                .put(Put.builder()
+                        .tableName(table)
+                        .item(buildItem(content))
+                        .build())
+                .build();
+    }
+
+    private Map<String, AttributeValue> buildItem(SignedContent content) {
+        return Map.of(
                 "eventId",          AttributeValue.fromS(content.eventId()),
                 "timestampEpochMs", AttributeValue.fromN(String.valueOf(content.timestampEpochMs())),
                 "algorithm",        AttributeValue.fromS(content.algorithm().name()),
                 "keyId",            AttributeValue.fromS(content.keyId()),
                 "processedAtMs",    AttributeValue.fromN(String.valueOf(System.currentTimeMillis()))
         );
-
-        putItem(item);
-        log.debugf("Ledger entry saved for eventId: %s", content.eventId());
     }
 
     @Override
@@ -68,4 +88,3 @@ public class LedgerRepository extends DynamoRepository {
         return table;
     }
 }
-

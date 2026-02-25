@@ -50,6 +50,7 @@ public class SignatureService {
             case RSA_PSS_SHA256 -> rsaPssSign(canonicalBytes, secret.keyMaterial());
             case ECDSA_P256_SHA256 -> asymmetricSign(canonicalBytes, secret.keyMaterial());
         };
+
         return Base64.getEncoder().encodeToString(rawSignature);
     }
 
@@ -126,6 +127,7 @@ public class SignatureService {
             Signature signer = Signature.getInstance("SHA256withECDSA");
             signer.initSign(privateKey);
             signer.update(data);
+
             return signer.sign();
         } catch (Exception e) {
             throw new RuntimeException("SHA256withECDSA signing failed", e);

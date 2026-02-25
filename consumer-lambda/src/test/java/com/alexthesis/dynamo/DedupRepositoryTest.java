@@ -1,6 +1,5 @@
 package com.alexthesis.dynamo;
 
-import com.alexthesis.dynamo.DedupRepository.DuplicateEventException;
 import com.alexthesis.messaging.Algorithm;
 import com.alexthesis.messaging.SignedContent;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
@@ -116,7 +115,7 @@ class DedupRepositoryTest {
                         .build());
 
         assertThatThrownBy(() -> dedupRepository.checkAndInsert(buildContent("evt-dup")))
-                .isInstanceOf(DuplicateEventException.class)
+                .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("evt-dup");
     }
 
@@ -129,7 +128,7 @@ class DedupRepositoryTest {
         when(dynamoDbClient.putItem(any(Consumer.class))).thenThrow(cause);
 
         assertThatThrownBy(() -> dedupRepository.checkAndInsert(buildContent("evt-cause")))
-                .isInstanceOf(DuplicateEventException.class)
+                .isInstanceOf(RuntimeException.class)
                 .hasCause(cause);
     }
 

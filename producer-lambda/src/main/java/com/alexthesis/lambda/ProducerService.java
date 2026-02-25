@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ProducerService {
 
     private static final AtomicBoolean COLDSTART_FLAG = new AtomicBoolean(true);
-    private static final int NS_CONVERTER = 1_000_000;
+    private static final long NS_PER_MS = 1_000_000L;
 
     private final EventPublisher publisher;
     private final SecretService secretService;
@@ -61,7 +61,7 @@ public class ProducerService {
         publisher.publish(new SignedEvent(content, signatureB64));
 
         long endTime = System.nanoTime();
-        long durationMs = (endTime - startTime) / NS_CONVERTER;
+        long durationMs = (endTime - startTime) / NS_PER_MS;
 
         return new ProducerResponse(content.eventId(), isColdStart, durationMs);
     }

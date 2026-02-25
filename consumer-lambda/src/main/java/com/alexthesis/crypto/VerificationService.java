@@ -47,6 +47,7 @@ public class VerificationService {
     public boolean verifySignature(SignedContent content, String signatureB64, KeySecret secret) {
         byte[] canonicalBytes = canonicalise(content);
         byte[] signatureBytes = Base64.getDecoder().decode(signatureB64);
+
         return switch (content.algorithm()) {
             case HMAC_SHA256 -> verifyHmac(canonicalBytes, signatureBytes, secret.keyMaterial());
             case RSA_PSS_SHA256 -> verifyRsaPss(canonicalBytes, signatureBytes, secret.keyMaterial());
@@ -75,6 +76,7 @@ public class VerificationService {
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(keyBytes, "HmacSHA256"));
             byte[] computed = mac.doFinal(data);
+
             return MessageDigest.isEqual(computed, expectedSignature);
         } catch (Exception e) {
             throw new RuntimeException("HMAC-SHA256 verification failed", e);
@@ -98,6 +100,7 @@ public class VerificationService {
             verifier.setParameter(pssParams);
             verifier.initVerify(publicKey);
             verifier.update(data);
+
             return verifier.verify(signature);
         } catch (Exception e) {
             throw new RuntimeException("RSASSA-PSS verification failed", e);
@@ -116,6 +119,7 @@ public class VerificationService {
             Signature verifier = Signature.getInstance("SHA256withECDSA");
             verifier.initVerify(publicKey);
             verifier.update(data);
+
             return verifier.verify(signature);
         } catch (Exception e) {
             throw new RuntimeException("SHA256withECDSA verification failed", e);

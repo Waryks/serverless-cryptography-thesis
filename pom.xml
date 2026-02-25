@@ -8,7 +8,6 @@
     <packaging>pom</packaging>
 
     <modules>
-        <module>benchmark-client</module>
         <module>commons</module>
         <module>consumer-lambda</module>
         <module>producer-lambda</module>
