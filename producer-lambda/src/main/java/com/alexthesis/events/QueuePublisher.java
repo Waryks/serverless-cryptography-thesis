@@ -7,6 +7,11 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 import software.amazon.awssdk.services.sqs.SqsClient;
 
+/**
+ * SQS-backed implementation of {@link EventPublisher}.
+ * Serialises a {@link SignedEvent} to JSON and sends it to the configured SQS queue.
+ * The queue URL is bound from {@code thesis.sqs.queue-name} in {@code application.properties}.
+ */
 @ApplicationScoped
 public class QueuePublisher implements EventPublisher {
 
@@ -23,7 +28,12 @@ public class QueuePublisher implements EventPublisher {
         this.queueUrl = queueUrl;
     }
 
-
+    /**
+     * Serialises {@code event} to JSON and sends it as a single SQS message.
+     *
+     * @param event the fully signed event to publish
+     * @throws RuntimeException if serialisation or the SQS send call fails
+     */
     @Override
     public void publish(SignedEvent event) {
         try {
