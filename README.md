@@ -1,52 +1,239 @@
-# serverless-cryptography-thesis
+# Serverless Cryptography Thesis
 
-This project uses Quarkus, the Supersonic Subatomic Java Framework.
+This repository contains the implementation and benchmark framework for
+a thesis investigating **partial cold start overhead introduced by
+cryptographic integrity mechanisms in serverless architectures**.
 
-If you want to learn more about Quarkus, please visit its website: <https://quarkus.io/>.
+The system is implemented using **Java 21 + Quarkus** and models a
+secure event-processing pipeline built on AWS serverless services
+(executed locally via LocalStack for reproducibility).
 
-## Running the application in dev mode
+------------------------------------------------------------------------
 
-You can run your application in dev mode that enables live coding using:
+## Thesis Goal
 
-```shell script
-./mvnw quarkus:dev
+The goal of this project is to measure the **application-level cold
+start impact** introduced by cryptographic operations in serverless
+systems.
+
+Specifically, we measure:
+
+-   JVM / Quarkus initialization overhead
+-   Secret retrieval from Secrets Manager
+-   Cryptographic key parsing
+-   Signing / verification cost
+-   Replay protection logic
+-   Ledger persistence cost
+
+> Infrastructure-level cold start effects (e.g., container scheduling,
+> image pull time) are out of scope.\
+> We focus strictly on application-level overhead introduced by security
+> mechanisms.
+
+------------------------------------------------------------------------
+
+# System Architecture
+
+The application models a secure event pipeline using:
+
+-   AWS Lambda (Producer + Consumer)
+-   SQS (Event transport)
+-   DynamoDB (Ledger + Deduplication)
+-   AWS Secrets Manager (Key storage)
+-   LocalStack (Local reproducible AWS environment)
+
+------------------------------------------------------------------------
+
+## High-Level Flow
+
+    Benchmark Runner (Python)
+            |
+            v
+    Producer Lambda
+      - Load key from Secrets Manager
+      - Parse key
+      - Sign event
+            |
+            v
+    SQS (thesis-events queue)
+            |
+            v
+    Consumer Lambda
+      - Load key
+      - Verify signature
+      - Validate timestamp window
+      - Replay protection (DynamoDB conditional write)
+      - Write event to ledger
+            |
+            v
+    DynamoDB
+      - thesis-dedup (TTL enabled)
+      - thesis-ledger
+
+------------------------------------------------------------------------
+
+## Sequence Diagram
+
+``` mermaid
+sequenceDiagram
+  participant B as Benchmark
+  participant P as Producer Lambda
+  participant Q as SQS
+  participant C as Consumer Lambda
+  participant D1 as DynamoDB (Dedup)
+  participant D2 as DynamoDB (Ledger)
+  participant S as Secrets Manager
+
+  B->>P: Invoke unsigned event
+  P->>S: Fetch key
+  P->>P: Parse + Sign
+  P->>Q: Send signed event
+  Q->>C: Trigger
+  C->>S: Fetch key
+  C->>C: Parse + Verify
+  C->>C: Timestamp validation
+  C->>D1: Conditional write (dedup)
+  C->>D2: Persist to ledger
 ```
 
-> **_NOTE:_**  Quarkus now ships with a Dev UI, which is available in dev mode only at <http://localhost:8080/q/dev/>.
+------------------------------------------------------------------------
 
-## Packaging and running the application
+# Repository Structure
 
-The application can be packaged using:
+This is a Maven multi-module project:
 
-```shell script
-./mvnw package
+    serverless-cryptography-thesis/
+    │
+    ├── commons/                # Shared models (SignedEvent, etc.)
+    ├── producer-lambda/        # Event signing Lambda (Quarkus)
+    ├── consumer-lambda/        # Verification + replay protection Lambda
+    ├── benchmark/              # Python benchmark & attack verification
+    ├── .github/
+    │   └── overall_implementation_details.md
+    └── pom.xml
+
+------------------------------------------------------------------------
+
+# Cryptographic Mechanisms Evaluated
+
+The benchmark evaluates three integrity mechanisms:
+
+-   HMAC-SHA256 (symmetric MAC)
+-   RSA-PSS-SHA256 (RSA-2048 signature)
+-   ECDSA P-256 + SHA-256
+
+Key material is stored in AWS Secrets Manager and seeded automatically
+by the benchmark harness in LocalStack.
+
+For asymmetric algorithms: - Private key → used by Producer - Public key
+→ used by Consumer
+
+------------------------------------------------------------------------
+
+# Replay Protection Model
+
+The Consumer enforces replay protection using:
+
+1.  Timestamp validation window
+2.  DynamoDB conditional writes keyed by `eventId`
+3.  TTL expiration on the dedup table
+
+This ensures: - Tampered payloads are rejected - Replay attacks are
+rejected - Expired events are rejected
+
+The benchmark includes an attack verification script to validate this
+behavior.
+
+------------------------------------------------------------------------
+
+# Caching & Mitigation Knobs
+
+One of the key experimental variables is key caching:
+
+    thesis.keys.cache.ttlSeconds
+
+-   0 → no caching (baseline)
+
+-   0 → cache enabled
+
+This allows measurement of mitigation strategies against cryptographic
+cold start overhead.
+
+------------------------------------------------------------------------
+
+# Benchmark Documentation
+
+All benchmark documentation is located in:
+
+    benchmark/README.md
+
+It explains:
+
+-   LocalStack provisioning
+-   Cold start methodology
+-   Native vs JVM comparisons
+-   Algorithm selection
+-   Output metrics
+-   Attack validation workflow
+
+------------------------------------------------------------------------
+
+# Build Instructions
+
+## JVM Mode
+
+``` bash
+mvn clean package -DskipTests
 ```
 
-It produces the `quarkus-run.jar` file in the `target/quarkus-app/` directory.
-Be aware that it’s not an _über-jar_ as the dependencies are copied into the `target/quarkus-app/lib/` directory.
+## Native Image Mode
 
-The application is now runnable using `java -jar target/quarkus-app/quarkus-run.jar`.
-
-If you want to build an _über-jar_, execute the following command:
-
-```shell script
-./mvnw package -Dquarkus.package.jar.type=uber-jar
+``` bash
+mvn clean package -DskipTests -Dnative -Dquarkus.native.container-build=true
 ```
 
-The application, packaged as an _über-jar_, is now runnable using `java -jar target/*-runner.jar`.
+------------------------------------------------------------------------
 
+# Benchmark Quick Start
 
-## Related Guides
+Install Python dependencies:
 
-- AWS Lambda ([guide](https://quarkus.io/guides/aws-lambda)): Write AWS Lambda functions
-- YAML Configuration ([guide](https://quarkus.io/guides/config-yaml)): Use YAML to configure your Quarkus application
+``` bash
+pip install -r benchmark/requirements.txt
+```
 
-## Provided Code
+Run a cold start benchmark:
 
-### Amazon Lambda Integration example
+``` bash
+python benchmark/run_benchmark.py --algorithm HMAC_SHA256 --cold-start
+```
 
-This example contains a Quarkus Greeting Lambda ready for Amazon.
+See full details in:
 
-[Related guide section...](https://quarkus.io/guides/aws-lambda)
+    benchmark/README.md
 
+------------------------------------------------------------------------
 
+# Thesis Context
+
+For detailed research framing, measurement model, scope definition, and
+implementation decisions, see:
+
+    .github/overall_implementation_details.md
+
+------------------------------------------------------------------------
+
+# Summary
+
+This repository provides:
+
+-   A reproducible secure serverless architecture
+-   Multiple cryptographic integrity implementations
+-   Replay protection enforcement
+-   A full benchmark harness
+-   Native vs JVM comparison
+-   Cold vs warm measurement support
+-   Attack validation tooling
+
+It serves as the experimental platform for evaluating the **performance
+cost of cryptographic integrity mechanisms in serverless systems**.
