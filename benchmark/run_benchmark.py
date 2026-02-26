@@ -65,6 +65,7 @@ import uuid
 from pathlib import Path
 
 import boto3
+from botocore.config import Config as BotocoreConfig
 from botocore.exceptions import ClientError
 
 # ---------------------------------------------------------------------------
@@ -89,9 +90,22 @@ DEDUP_TABLE            = "thesis-dedup"
 LEDGER_TABLE           = "thesis-ledger"
 PRODUCER_FUNCTION_NAME = "producer"
 CONSUMER_FUNCTION_NAME = "consumer"
-LAMBDA_RUNTIME         = "java21"
-LAMBDA_HANDLER         = "io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest"
 LAMBDA_ROLE_NAME       = "thesis-lambda-role"
+
+# ---------------------------------------------------------------------------
+# Runtime / artifact settings — overridden by --native at startup
+# ---------------------------------------------------------------------------
+# JVM mode (default)
+LAMBDA_RUNTIME_JVM     = "java21"
+LAMBDA_HANDLER_JVM     = "io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest"
+
+# Native mode  (provided.al2023 + Quarkus native bootstrap)
+LAMBDA_RUNTIME_NATIVE  = "provided.al2023"
+LAMBDA_HANDLER_NATIVE  = "io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest"
+
+# Active values — set to JVM defaults here, overridden in main() when --native is passed
+LAMBDA_RUNTIME         = LAMBDA_RUNTIME_JVM
+LAMBDA_HANDLER         = LAMBDA_HANDLER_JVM
 
 # One Secrets Manager secret per algorithm.
 # HMAC   — symmetric: same secret used by producer and consumer.
@@ -102,9 +116,14 @@ KEY_SECRET_NAMES = {
     "ECDSA_P256_SHA256": "thesis/key/ecdsa-p256-sha256",
 }
 
-REPO_ROOT    = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Artifact paths — set to JVM defaults here, overridden in main() when --native is passed
 PRODUCER_ZIP = REPO_ROOT / "producer-lambda" / "target" / "function.zip"
 CONSUMER_ZIP = REPO_ROOT / "consumer-lambda"  / "target" / "function.zip"
+
+# Internal flag — prevents running the Maven build twice when both zips are missing
+_artifacts_built: bool = False
 
 # ---------------------------------------------------------------------------
 # AWS client helpers
@@ -123,6 +142,23 @@ def _sm():     return boto3.client("secretsmanager", **_creds())
 def _dynamo(): return boto3.client("dynamodb",        **_creds())
 def _lambda(): return boto3.client("lambda",          **_creds())
 def _iam():    return boto3.client("iam",             **_creds())
+
+def _lambda_invoke():
+    """
+    Lambda client used for *invocations* only.
+    Uses a 300 s read timeout so that native cold-start container spin-up
+    (which can take 60–120 s) does not cause boto3 to silently hang or abort.
+    The default boto3 read timeout (60 s) is too short for the first native invoke.
+    """
+    return boto3.client(
+        "lambda",
+        config=BotocoreConfig(
+            read_timeout=300,
+            connect_timeout=10,
+            retries={"max_attempts": 0},   # no automatic retries — we handle them ourselves
+        ),
+        **_creds(),
+    )
 
 # ---------------------------------------------------------------------------
 # LocalStack lifecycle
@@ -344,12 +380,54 @@ def _wait_for_lambda_updatable(name: str, timeout: int = 60):
     sys.exit(f"[ERROR] Timed out waiting for Lambda '{name}' to finish updating.")
 
 
+def build_artifacts():
+    """
+    Build producer-lambda and consumer-lambda with Maven.
+    Uses -Pnative when --native was passed, plain JVM packaging otherwise.
+
+    Called automatically by provision_lambda() when the expected zip is not
+    found, so the user never needs to run mvn manually.
+    Guarded by _artifacts_built so the Maven build only runs once even when
+    both producer and consumer zips are missing.
+    """
+    global _artifacts_built
+    if _artifacts_built:
+        return
+    _artifacts_built = True
+
+    cmd = [
+        "mvn", "--no-transfer-progress", "-q",
+        "package", "-DskipTests",
+        "-pl", "commons,producer-lambda,consumer-lambda",
+    ]
+    if LAMBDA_RUNTIME == LAMBDA_RUNTIME_NATIVE:
+        cmd.append("-Pnative")
+        mode = "native (GraalVM — this will take several minutes)"
+    else:
+        mode = "JVM"
+
+    print(f"\n[build] Building artifacts  mode={mode}")
+    print(f"[build] Command: {' '.join(cmd)}\n")
+
+    result = subprocess.run(cmd, cwd=REPO_ROOT)
+    if result.returncode != 0:
+        sys.exit(
+            f"[ERROR] Maven build failed (exit code {result.returncode}).\n"
+            f"        Run manually to see full output:\n"
+            f"        {' '.join(cmd)}"
+        )
+    print("[build] Build successful.\n")
+
+
 def provision_lambda(name: str, zip_path: Path, role_arn: str, env_vars: dict):
     if not zip_path.exists():
-        sys.exit(
-            f"[ERROR] Artifact not found: {zip_path}\n"
-            f"        Build with: mvn -q package -DskipTests"
-        )
+        print(f"[build] Artifact not found: {zip_path}")
+        build_artifacts()
+        if not zip_path.exists():
+            sys.exit(
+                f"[ERROR] Artifact still missing after build: {zip_path}\n"
+                f"        Check Maven output above for compilation errors."
+            )
     lam   = _lambda()
     zdata = zip_path.read_bytes()
     try:
@@ -363,7 +441,7 @@ def provision_lambda(name: str, zip_path: Path, role_arn: str, env_vars: dict):
             MemorySize   = 512,
             Environment  = {"Variables": env_vars},
         )
-        print(f"[lambda] Created '{name}' ({resp['FunctionArn']})")
+        print(f"[lambda] Created '{name}' ({resp['FunctionArn']})  runtime={LAMBDA_RUNTIME}")
     except ClientError as e:
         if e.response["Error"]["Code"] == "ResourceConflictException":
             # Function already exists — update code first, wait, then update config
@@ -371,8 +449,12 @@ def provision_lambda(name: str, zip_path: Path, role_arn: str, env_vars: dict):
             lam.update_function_code(FunctionName=name, ZipFile=zdata)
             _wait_for_lambda_updatable(name)
             lam.update_function_configuration(
-                FunctionName=name, Environment={"Variables": env_vars})
-            print(f"[lambda] Updated '{name}'")
+                FunctionName = name,
+                Runtime      = LAMBDA_RUNTIME,
+                Handler      = LAMBDA_HANDLER,
+                Environment  = {"Variables": env_vars},
+            )
+            print(f"[lambda] Updated '{name}'  runtime={LAMBDA_RUNTIME}")
         else:
             raise
 
@@ -383,12 +465,13 @@ def provision_sqs_trigger(queue_url: str):
     )["Attributes"]["QueueArn"]
     try:
         _lambda().create_event_source_mapping(
-            EventSourceArn = q_arn,
-            FunctionName   = CONSUMER_FUNCTION_NAME,
-            BatchSize      = 10,
-            Enabled        = True,
+            EventSourceArn        = q_arn,
+            FunctionName          = CONSUMER_FUNCTION_NAME,
+            BatchSize             = 10,
+            Enabled               = True,
+            FunctionResponseTypes = ["ReportBatchItemFailures"],
         )
-        print(f"[lambda] SQS -> '{CONSUMER_FUNCTION_NAME}' event-source mapping created")
+        print(f"[lambda] SQS -> '{CONSUMER_FUNCTION_NAME}' event-source mapping created (partial batch response enabled)")
     except ClientError as e:
         if e.response["Error"]["Code"] == "ResourceConflictException":
             print("[lambda] Event-source mapping already exists — skipping")
@@ -571,7 +654,7 @@ def _build_payload(algorithm: str, key_id: str, run_id: str) -> dict:
 
 
 def _invoke_producer(payload: dict) -> dict:
-    resp = _lambda().invoke(
+    resp = _lambda_invoke().invoke(
         FunctionName   = PRODUCER_FUNCTION_NAME,
         InvocationType = "RequestResponse",
         Payload        = json.dumps(payload).encode(),
@@ -582,7 +665,41 @@ def _invoke_producer(payload: dict) -> dict:
     return json.loads(body)
 
 
-def run_benchmark(algorithm: str, invocations: int, run_id: str) -> list[dict]:
+def _warmup_native(algorithm: str, run_id: str, max_wait: int = 300):
+    """
+    Issue a throwaway invocation to let LocalStack spin up the native
+    execution environment before the measured benchmark loop begins.
+
+    On the first native invocation LocalStack pulls the provided.al2023 base
+    image and starts the container — this takes 60–120 s and would otherwise
+    make the first *measured* invocation appear to hang indefinitely (the
+    boto3 default read timeout of 60 s is shorter than the spin-up time,
+    which is why the run appears frozen after 'All resources healthy').
+    """
+    key_id  = KEY_SECRET_NAMES[algorithm]
+    payload = _build_payload(algorithm, key_id, run_id)
+    print(f"[native] Warming up Lambda execution environment (may take up to {max_wait}s) …",
+          end="", flush=True)
+    deadline = time.time() + max_wait
+    attempt  = 0
+    while time.time() < deadline:
+        attempt += 1
+        try:
+            _invoke_producer(payload)
+            print(f" done (attempt {attempt}).")
+            return
+        except Exception:
+            # ResourceConflictException means the container is still initialising —
+            # keep retrying.  Any other error is also retried so that a single
+            # container-start failure doesn't abort the whole run.
+            print(".", end="", flush=True)
+            time.sleep(5)
+    print()
+    sys.exit(f"[ERROR] Native warm-up timed out after {max_wait}s. "
+             "Check LocalStack logs: docker logs localstack")
+
+
+def run_benchmark(algorithm: str, invocations: int, run_id: str, native: bool = False) -> list[dict]:
     """Invoke the Producer Lambda and collect ProducerResponse objects."""
     key_id  = KEY_SECRET_NAMES[algorithm]
     results = []
@@ -590,6 +707,13 @@ def run_benchmark(algorithm: str, invocations: int, run_id: str) -> list[dict]:
     print(f"\n[bench]  algorithm={algorithm}  invocations={invocations}  run={run_id}")
     print(f"[bench]  keyId={key_id}")
     print("-" * 60)
+
+    # In native mode the Lambda execution environment (provided.al2023 container)
+    # is spun up on the *first* invocation, not when State=Active.  This spin-up
+    # takes 60–120 s and would make the run appear frozen.  Issue a throwaway
+    # invocation first so all measured invocations hit an already-warm container.
+    if native:
+        _warmup_native(algorithm, run_id)
 
     for i in range(1, invocations + 1):
         try:
@@ -653,12 +777,18 @@ Research variables (thesis specification):
   --cold-start   Restart LocalStack -> guaranteed partial cold start
   --warm-only    Reuse container -> warm invocation latency only
   --invocations  Sample size for percentile calculations (P50/P95/P99)
+  --native       Use GraalVM native binary instead of JVM jar
 
-Examples:
+JVM examples (default):
   python run_benchmark.py --algorithm HMAC_SHA256       --cold-start
   python run_benchmark.py --algorithm RSA_PSS_SHA256    --cold-start
   python run_benchmark.py --algorithm ECDSA_P256_SHA256 --cold-start
   python run_benchmark.py --algorithm RSA_PSS_SHA256 --warm-only --cache-ttl 60 --invocations 50
+
+Native examples (build first: mvn package -Pnative -DskipTests):
+  python run_benchmark.py --native --algorithm HMAC_SHA256       --cold-start
+  python run_benchmark.py --native --algorithm RSA_PSS_SHA256    --cold-start
+  python run_benchmark.py --native --algorithm ECDSA_P256_SHA256 --cold-start
         """,
     )
     parser.add_argument(
@@ -710,6 +840,15 @@ Examples:
         help="LocalStack hostname/IP (default: localhost or LOCALSTACK_HOST env var)",
     )
     parser.add_argument(
+        "--native",
+        action="store_true",
+        help=(
+            "Use GraalVM native artifacts instead of JVM jars. "
+            "Expects target/function.zip built with: mvn package -Pnative -DskipTests. "
+            "Sets Lambda runtime to 'provided.al2023'."
+        ),
+    )
+    parser.add_argument(
         "--docker-socket",
         default=os.environ.get("DOCKER_SOCKET", ""),
         metavar="PATH",
@@ -728,9 +867,22 @@ def main():
     run_id = str(uuid.uuid4())[:8]
 
     global LOCALSTACK_HOST, LOCALSTACK_ENDPOINT, DOCKER_SOCKET
+    global LAMBDA_RUNTIME, LAMBDA_HANDLER, PRODUCER_ZIP, CONSUMER_ZIP
+    global _artifacts_built
+    _artifacts_built = False
+
     LOCALSTACK_HOST     = args.localstack_host
     LOCALSTACK_ENDPOINT = f"http://{LOCALSTACK_HOST}:4566"
     DOCKER_SOCKET       = args.docker_socket
+
+    if args.native:
+        LAMBDA_RUNTIME = LAMBDA_RUNTIME_NATIVE
+        LAMBDA_HANDLER = LAMBDA_HANDLER_NATIVE
+        # Quarkus native builds produce the same function.zip name
+        PRODUCER_ZIP   = REPO_ROOT / "producer-lambda" / "target" / "function.zip"
+        CONSUMER_ZIP   = REPO_ROOT / "consumer-lambda"  / "target" / "function.zip"
+
+    mode_label = "native (GraalVM)" if args.native else "JVM"
 
     print(f"\n{'='*60}")
     print(f"  Thesis Benchmark  —  run_id={run_id}")
@@ -738,6 +890,8 @@ def main():
     print(f"  invocations  : {args.invocations}")
     print(f"  cache-ttl    : {args.cache_ttl}s")
     print(f"  cold-start   : {args.cold_start}")
+    print(f"  mode         : {mode_label}")
+    print(f"  runtime      : {LAMBDA_RUNTIME}")
     print(f"  localstack   : {LOCALSTACK_ENDPOINT}")
     print(f"  docker socket: {_resolve_docker_socket()}")
     print(f"{'='*60}\n")
@@ -769,7 +923,7 @@ def main():
         return
 
     # ── Run ─────────────────────────────────────────────────────────────────
-    results = run_benchmark(args.algorithm, args.invocations, run_id)
+    results = run_benchmark(args.algorithm, args.invocations, run_id, native=args.native)
     print_summary(results, algorithm=args.algorithm, cache_ttl=args.cache_ttl)
 
 

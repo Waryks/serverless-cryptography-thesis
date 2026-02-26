@@ -119,22 +119,37 @@ public class ConsumerService {
         }
     }
 
+    /**
+     * Base class for all security-policy rejections.
+     * The handler catches this single type to discard any message that violates
+     * the security policy — without redelivery — regardless of which specific
+     * check failed.
+     */
+    public static class SecurityRejectionException extends RuntimeException {
+        public SecurityRejectionException(String message) {
+            super(message);
+        }
+        public SecurityRejectionException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
     /** Thrown when signature verification fails. */
-    public static class InvalidSignatureException extends RuntimeException {
+    public static class InvalidSignatureException extends SecurityRejectionException {
         public InvalidSignatureException(String message) {
             super(message);
         }
     }
 
     /** Thrown when an event arrives outside the allowed timestamp window. */
-    public static class ReplayWindowException extends RuntimeException {
+    public static class ReplayWindowException extends SecurityRejectionException {
         public ReplayWindowException(String message) {
             super(message);
         }
     }
 
     /** Thrown when the dedup+ledger transaction is cancelled due to a duplicate eventId. */
-    public static class DuplicateEventException extends RuntimeException {
+    public static class DuplicateEventException extends SecurityRejectionException {
         public DuplicateEventException(String message, Throwable cause) {
             super(message, cause);
         }

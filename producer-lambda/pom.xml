@@ -36,6 +36,10 @@
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>url-connection-client</artifactId>
         </dependency>
+         <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>checksums</artifactId>
+        </dependency>
 
         <!-- Others -->
         <dependency>
@@ -89,4 +93,19 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>native</id>
+            <properties>
+                <quarkus.native.enabled>true</quarkus.native.enabled>
+                <quarkus.native.container-build>true</quarkus.native.container-build>
+                <quarkus.native.builder-image>quay.io/quarkus/ubi-quarkus-mandrel-builder-image:jdk-21</quarkus.native.builder-image>
+                <!-- Cap GraalVM heap to avoid OOM kill (exit 137) inside the build container.
+                     The Colima VM must have at least 6 GB RAM. Resize with:
+                         colima stop and colima start with cpu 4 and memory 6     -->
+                <quarkus.native.native-image-xmx>4g</quarkus.native.native-image-xmx>
+            </properties>
+        </profile>
+    </profiles>
 </project>

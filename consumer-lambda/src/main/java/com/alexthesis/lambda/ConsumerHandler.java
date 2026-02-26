@@ -2,10 +2,31 @@ package com.alexthesis.lambda;
 
 import com.amazonaws.services.lambda.runtime.Context;
 import com.amazonaws.services.lambda.runtime.RequestHandler;
+import com.amazonaws.services.lambda.runtime.events.SQSBatchResponse;
 import com.amazonaws.services.lambda.runtime.events.SQSEvent;
 import jakarta.inject.Inject;
+import org.jboss.logging.Logger;
 
-public class ConsumerHandler implements RequestHandler<SQSEvent, Void> {
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * AWS Lambda entry-point for the consumer pipeline.
+ *
+ * <p>Uses SQS partial batch response: each message in the batch is processed
+ * independently. Only messages that fail processing are returned as
+ * {@link SQSBatchResponse.BatchItemFailure}, so SQS redelivers only those —
+ * not the entire batch. This prevents a single bad message (e.g. a tampered
+ * payload that correctly triggers {@code InvalidSignatureException}) from
+ * blocking all other messages in the same batch.
+ *
+ * <p>Requires the SQS event source mapping to have
+ * {@code FunctionResponseTypes = [ReportBatchItemFailures]} enabled.
+ * This is configured in {@code run_benchmark.py} when the trigger is created.
+ */
+public class ConsumerHandler implements RequestHandler<SQSEvent, SQSBatchResponse> {
+
+    private static final Logger log = Logger.getLogger(ConsumerHandler.class);
 
     private final ConsumerService consumerService;
 
@@ -15,11 +36,26 @@ public class ConsumerHandler implements RequestHandler<SQSEvent, Void> {
     }
 
     @Override
-    public Void handleRequest(SQSEvent event, Context context) {
-        for(SQSEvent.SQSMessage message : event.getRecords()) {
-            consumerService.processMessage(message.getBody());
+    public SQSBatchResponse handleRequest(SQSEvent event, Context context) {
+        List<SQSBatchResponse.BatchItemFailure> failures = new ArrayList<>();
+
+        for (SQSEvent.SQSMessage message : event.getRecords()) {
+            try {
+                consumerService.processMessage(message.getBody());
+            } catch (ConsumerService.SecurityRejectionException e) {
+                log.warnf("Discarding message %s: security rejection — %s [%s]",
+                        message.getMessageId(), e.getMessage(), e.getClass().getSimpleName());
+            } catch (Exception e) {
+                log.errorf(e, "Transient failure processing message %s — will retry",
+                        message.getMessageId());
+                failures.add(SQSBatchResponse.BatchItemFailure.builder()
+                        .withItemIdentifier(message.getMessageId())
+                        .build());
+            }
         }
 
-        return null;
+        return SQSBatchResponse.builder()
+                .withBatchItemFailures(failures)
+                .build();
     }
 }

@@ -153,16 +153,25 @@ def _logs_contain(text: str) -> bool:
 def _canonical_bytes(content: dict) -> bytes:
     """
     Produce the canonical byte representation of a SignedContent dict.
-    Keys are sorted alphabetically at every level — mirrors Jackson's
-    ORDER_MAP_ENTRIES_BY_KEYS used by the producer's SignatureService.
+
+    Jackson serialises Java *records* in their **field declaration order**,
+    not alphabetically.  ORDER_MAP_ENTRIES_BY_KEYS only sorts Map<K,V> entries;
+    it has no effect on POJO / record accessor order.
+
+    SignedContent field declaration order (commons/SignedContent.java):
+        eventId  →  timestampEpochMs  →  algorithm  →  keyId  →  payload
+
+    Nested dicts (e.g. the payload JsonNode) are kept in insertion order,
+    mirroring how Jackson serialises a JsonNode with no extra sorting.
     """
-    def _sort(obj):
-        if isinstance(obj, dict):
-            return {k: _sort(v) for k, v in sorted(obj.items())}
-        if isinstance(obj, list):
-            return [_sort(i) for i in obj]
-        return obj
-    return json.dumps(_sort(content), separators=(",", ":")).encode()
+    ordered = {
+        "eventId":          content["eventId"],
+        "timestampEpochMs": content["timestampEpochMs"],
+        "algorithm":        content["algorithm"],
+        "keyId":            content["keyId"],
+        "payload":          content["payload"],
+    }
+    return json.dumps(ordered, separators=(",", ":")).encode()
 
 # ---------------------------------------------------------------------------
 # Signing helpers (must match SignatureService in producer-lambda)
