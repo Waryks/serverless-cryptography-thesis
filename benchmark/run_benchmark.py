@@ -19,8 +19,7 @@ Research variables (from .github/overall_implementation_details.md):
 
 LocalStack is started with the Docker socket mounted so Lambda containers
 can be spawned via the Docker daemon. With Colima, /var/run/docker.sock
-is the correct path inside containers (not ~/.colima/default/docker.sock,
-which is the host-side socket and cannot be bind-mounted):
+is the correct path inside containers:
     docker run -v /var/run/docker.sock:/var/run/docker.sock ...
 
 Payload sent to the Producer Lambda (commons SignedEvent / SignedContent):
@@ -93,19 +92,10 @@ CONSUMER_FUNCTION_NAME = "consumer"
 LAMBDA_ROLE_NAME       = "thesis-lambda-role"
 
 # ---------------------------------------------------------------------------
-# Runtime / artifact settings — overridden by --native at startup
+# Runtime / artifact settings
 # ---------------------------------------------------------------------------
-# JVM mode (default)
-LAMBDA_RUNTIME_JVM     = "java21"
-LAMBDA_HANDLER_JVM     = "io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest"
-
-# Native mode  (provided.al2023 + Quarkus native bootstrap)
-LAMBDA_RUNTIME_NATIVE  = "provided.al2023"
-LAMBDA_HANDLER_NATIVE  = "io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest"
-
-# Active values — set to JVM defaults here, overridden in main() when --native is passed
-LAMBDA_RUNTIME         = LAMBDA_RUNTIME_JVM
-LAMBDA_HANDLER         = LAMBDA_HANDLER_JVM
+LAMBDA_RUNTIME = "java21"
+LAMBDA_HANDLER = "io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest"
 
 # One Secrets Manager secret per algorithm.
 # HMAC   — symmetric: same secret used by producer and consumer.
@@ -118,7 +108,6 @@ KEY_SECRET_NAMES = {
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Artifact paths — set to JVM defaults here, overridden in main() when --native is passed
 PRODUCER_ZIP = REPO_ROOT / "producer-lambda" / "target" / "function.zip"
 CONSUMER_ZIP = REPO_ROOT / "consumer-lambda"  / "target" / "function.zip"
 
@@ -382,8 +371,7 @@ def _wait_for_lambda_updatable(name: str, timeout: int = 60):
 
 def build_artifacts():
     """
-    Build producer-lambda and consumer-lambda with Maven.
-    Uses -Pnative when --native was passed, plain JVM packaging otherwise.
+    Build producer-lambda and consumer-lambda with Maven (JVM mode).
 
     Called automatically by provision_lambda() when the expected zip is not
     found, so the user never needs to run mvn manually.
@@ -400,13 +388,8 @@ def build_artifacts():
         "package", "-DskipTests",
         "-pl", "commons,producer-lambda,consumer-lambda",
     ]
-    if LAMBDA_RUNTIME == LAMBDA_RUNTIME_NATIVE:
-        cmd.append("-Pnative")
-        mode = "native (GraalVM — this will take several minutes)"
-    else:
-        mode = "JVM"
 
-    print(f"\n[build] Building artifacts  mode={mode}")
+    print(f"\n[build] Building artifacts  mode=JVM")
     print(f"[build] Command: {' '.join(cmd)}\n")
 
     result = subprocess.run(cmd, cwd=REPO_ROOT)
@@ -665,41 +648,7 @@ def _invoke_producer(payload: dict) -> dict:
     return json.loads(body)
 
 
-def _warmup_native(algorithm: str, run_id: str, max_wait: int = 300):
-    """
-    Issue a throwaway invocation to let LocalStack spin up the native
-    execution environment before the measured benchmark loop begins.
-
-    On the first native invocation LocalStack pulls the provided.al2023 base
-    image and starts the container — this takes 60–120 s and would otherwise
-    make the first *measured* invocation appear to hang indefinitely (the
-    boto3 default read timeout of 60 s is shorter than the spin-up time,
-    which is why the run appears frozen after 'All resources healthy').
-    """
-    key_id  = KEY_SECRET_NAMES[algorithm]
-    payload = _build_payload(algorithm, key_id, run_id)
-    print(f"[native] Warming up Lambda execution environment (may take up to {max_wait}s) …",
-          end="", flush=True)
-    deadline = time.time() + max_wait
-    attempt  = 0
-    while time.time() < deadline:
-        attempt += 1
-        try:
-            _invoke_producer(payload)
-            print(f" done (attempt {attempt}).")
-            return
-        except Exception:
-            # ResourceConflictException means the container is still initialising —
-            # keep retrying.  Any other error is also retried so that a single
-            # container-start failure doesn't abort the whole run.
-            print(".", end="", flush=True)
-            time.sleep(5)
-    print()
-    sys.exit(f"[ERROR] Native warm-up timed out after {max_wait}s. "
-             "Check LocalStack logs: docker logs localstack")
-
-
-def run_benchmark(algorithm: str, invocations: int, run_id: str, native: bool = False) -> list[dict]:
+def run_benchmark(algorithm: str, invocations: int, run_id: str) -> list[dict]:
     """Invoke the Producer Lambda and collect ProducerResponse objects."""
     key_id  = KEY_SECRET_NAMES[algorithm]
     results = []
@@ -707,13 +656,6 @@ def run_benchmark(algorithm: str, invocations: int, run_id: str, native: bool = 
     print(f"\n[bench]  algorithm={algorithm}  invocations={invocations}  run={run_id}")
     print(f"[bench]  keyId={key_id}")
     print("-" * 60)
-
-    # In native mode the Lambda execution environment (provided.al2023 container)
-    # is spun up on the *first* invocation, not when State=Active.  This spin-up
-    # takes 60–120 s and would make the run appear frozen.  Issue a throwaway
-    # invocation first so all measured invocations hit an already-warm container.
-    if native:
-        _warmup_native(algorithm, run_id)
 
     for i in range(1, invocations + 1):
         try:
@@ -777,18 +719,21 @@ Research variables (thesis specification):
   --cold-start   Restart LocalStack -> guaranteed partial cold start
   --warm-only    Reuse container -> warm invocation latency only
   --invocations  Sample size for percentile calculations (P50/P95/P99)
-  --native       Use GraalVM native binary instead of JVM jar
 
-JVM examples (default):
+Examples:
+  # Cold-start baseline for each algorithm
   python run_benchmark.py --algorithm HMAC_SHA256       --cold-start
   python run_benchmark.py --algorithm RSA_PSS_SHA256    --cold-start
   python run_benchmark.py --algorithm ECDSA_P256_SHA256 --cold-start
+
+  # Mitigation: 60 s key cache, warm container, 50 invocations
   python run_benchmark.py --algorithm RSA_PSS_SHA256 --warm-only --cache-ttl 60 --invocations 50
 
-Native examples (build first: mvn package -Pnative -DskipTests):
-  python run_benchmark.py --native --algorithm HMAC_SHA256       --cold-start
-  python run_benchmark.py --native --algorithm RSA_PSS_SHA256    --cold-start
-  python run_benchmark.py --native --algorithm ECDSA_P256_SHA256 --cold-start
+  # Provision resources only, do not invoke Lambdas
+  python run_benchmark.py --provision-only
+
+  # LocalStack already running — skip docker run
+  python run_benchmark.py --skip-start --algorithm HMAC_SHA256
         """,
     )
     parser.add_argument(
@@ -840,15 +785,6 @@ Native examples (build first: mvn package -Pnative -DskipTests):
         help="LocalStack hostname/IP (default: localhost or LOCALSTACK_HOST env var)",
     )
     parser.add_argument(
-        "--native",
-        action="store_true",
-        help=(
-            "Use GraalVM native artifacts instead of JVM jars. "
-            "Expects target/function.zip built with: mvn package -Pnative -DskipTests. "
-            "Sets Lambda runtime to 'provided.al2023'."
-        ),
-    )
-    parser.add_argument(
         "--docker-socket",
         default=os.environ.get("DOCKER_SOCKET", ""),
         metavar="PATH",
@@ -867,7 +803,6 @@ def main():
     run_id = str(uuid.uuid4())[:8]
 
     global LOCALSTACK_HOST, LOCALSTACK_ENDPOINT, DOCKER_SOCKET
-    global LAMBDA_RUNTIME, LAMBDA_HANDLER, PRODUCER_ZIP, CONSUMER_ZIP
     global _artifacts_built
     _artifacts_built = False
 
@@ -875,22 +810,12 @@ def main():
     LOCALSTACK_ENDPOINT = f"http://{LOCALSTACK_HOST}:4566"
     DOCKER_SOCKET       = args.docker_socket
 
-    if args.native:
-        LAMBDA_RUNTIME = LAMBDA_RUNTIME_NATIVE
-        LAMBDA_HANDLER = LAMBDA_HANDLER_NATIVE
-        # Quarkus native builds produce the same function.zip name
-        PRODUCER_ZIP   = REPO_ROOT / "producer-lambda" / "target" / "function.zip"
-        CONSUMER_ZIP   = REPO_ROOT / "consumer-lambda"  / "target" / "function.zip"
-
-    mode_label = "native (GraalVM)" if args.native else "JVM"
-
     print(f"\n{'='*60}")
     print(f"  Thesis Benchmark  —  run_id={run_id}")
     print(f"  algorithm    : {args.algorithm}")
     print(f"  invocations  : {args.invocations}")
     print(f"  cache-ttl    : {args.cache_ttl}s")
     print(f"  cold-start   : {args.cold_start}")
-    print(f"  mode         : {mode_label}")
     print(f"  runtime      : {LAMBDA_RUNTIME}")
     print(f"  localstack   : {LOCALSTACK_ENDPOINT}")
     print(f"  docker socket: {_resolve_docker_socket()}")
@@ -923,7 +848,7 @@ def main():
         return
 
     # ── Run ─────────────────────────────────────────────────────────────────
-    results = run_benchmark(args.algorithm, args.invocations, run_id, native=args.native)
+    results = run_benchmark(args.algorithm, args.invocations, run_id)
     print_summary(results, algorithm=args.algorithm, cache_ttl=args.cache_ttl)
 
 

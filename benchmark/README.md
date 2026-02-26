@@ -60,7 +60,6 @@ non-standard socket path.
 | `--cold-start` | flag | Stop + remove container → guaranteed partial cold start |
 | `--warm-only` | flag | Reuse existing container → warm invocation baseline |
 | `--invocations` | integer | Number of Lambda calls (more = better P95/P99 coverage) |
-| `--native` | flag | Use GraalVM native binary instead of JVM jar (`provided.al2023` runtime) |
 | `--localstack-host` | hostname/IP | LocalStack host (default: `localhost`) |
 | `--docker-socket` | path | Docker socket override (default: auto-detected, see above) |
 
@@ -69,7 +68,7 @@ non-standard socket path.
 ## Usage
 
 ```bash
-# Baseline cold-start run for each algorithm (JVM)
+# Baseline cold-start run for each algorithm
 python benchmark/run_benchmark.py --algorithm HMAC_SHA256       --cold-start
 python benchmark/run_benchmark.py --algorithm RSA_PSS_SHA256    --cold-start
 python benchmark/run_benchmark.py --algorithm ECDSA_P256_SHA256 --cold-start
@@ -77,54 +76,12 @@ python benchmark/run_benchmark.py --algorithm ECDSA_P256_SHA256 --cold-start
 # Mitigation: 60 s key cache, 50 warm invocations
 python benchmark/run_benchmark.py --algorithm RSA_PSS_SHA256 --warm-only --cache-ttl 60 --invocations 50
 
-# Native mode (build first — see Native Mode section below)
-python benchmark/run_benchmark.py --native --algorithm HMAC_SHA256       --cold-start
-python benchmark/run_benchmark.py --native --algorithm RSA_PSS_SHA256    --cold-start
-python benchmark/run_benchmark.py --native --algorithm ECDSA_P256_SHA256 --cold-start
-
 # Provision resources only (no Lambda invocations)
 python benchmark/run_benchmark.py --provision-only
 
 # LocalStack already running — skip docker run
 python benchmark/run_benchmark.py --skip-start --algorithm HMAC_SHA256
 ```
-
----
-
-## Native Mode (GraalVM)
-
-The `--native` flag switches the Lambda runtime to `provided.al2023` and
-expects Quarkus native binaries packaged as `function.zip`.
-
-### Build
-
-```bash
-# Requires GraalVM / Mandrel with native-image installed
-mvn -q package -Pnative -DskipTests -pl commons,producer-lambda,consumer-lambda
-```
-
-> **Heap / OOM:** Native image compilation is memory-intensive.
-> If the build exits with code 137 (OOM), increase Docker/Colima memory:
-> ```bash
-> colima stop
-> colima start --cpu 4 --memory 8
-> ```
-> Or raise the GraalVM heap explicitly in both module poms:
-> ```xml
-> <quarkus.native.native-image-xmx>6g</quarkus.native.native-image-xmx>
-> ```
-
-### Container spin-up warm-up
-
-With the `provided.al2023` runtime, LocalStack starts the Lambda execution
-environment container **on the first invocation**, not when the function
-reports `State=Active`. This spin-up can take 60–120 s and would cause the
-benchmark to appear frozen after the health-check line.
-
-The script handles this automatically: before the measured loop begins it
-issues a **throwaway warm-up invocation** with a 300 s timeout and retries
-until it succeeds.  All subsequent measured invocations hit a running
-container and return promptly.
 
 ---
 
