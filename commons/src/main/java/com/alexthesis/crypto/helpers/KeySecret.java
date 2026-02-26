@@ -1,4 +1,4 @@
-package com.alexthesis.crypto;
+package com.alexthesis.crypto.helpers;
 
 /**
  * Represents the JSON structure stored in AWS Secrets Manager for a key entry.
@@ -10,5 +10,4 @@ public record KeySecret(
         String algorithm,
         String keyMaterial
 ) {}
-
 

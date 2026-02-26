@@ -1,6 +1,6 @@
 package com.alexthesis.lambda;
 
-import com.alexthesis.crypto.KeySecret;
+import com.alexthesis.crypto.helpers.KeySecret;
 import com.alexthesis.crypto.SecretService;
 import com.alexthesis.crypto.SignatureService;
 import com.alexthesis.events.EventPublisher;
@@ -61,7 +61,7 @@ public class ProducerService {
         publisher.publish(new SignedEvent(content, signatureB64));
 
         long endTime = System.nanoTime();
-        long durationMs = (endTime - startTime) / NS_PER_MS;
+        double durationMs = (endTime - startTime) / (double) NS_PER_MS;
 
         return new ProducerResponse(content.eventId(), isColdStart, durationMs);
     }

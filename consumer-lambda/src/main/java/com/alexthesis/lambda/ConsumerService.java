@@ -1,6 +1,6 @@
 package com.alexthesis.lambda;
 
-import com.alexthesis.crypto.KeySecret;
+import com.alexthesis.crypto.helpers.KeySecret;
 import com.alexthesis.crypto.SecretService;
 import com.alexthesis.crypto.VerificationService;
 import com.alexthesis.dynamo.DedupRepository;
@@ -24,9 +24,9 @@ import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
 @ApplicationScoped
 public class ConsumerService {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final Logger log = Logger.getLogger(ConsumerService.class);
 
+    private final ObjectMapper objectMapper;
     private final SecretService secretService;
     private final VerificationService verificationService;
     private final DedupRepository dedupRepository;
@@ -36,13 +36,15 @@ public class ConsumerService {
     private final long replayWindowMs;
 
     @Inject
-    public ConsumerService(SecretService secretService,
+    public ConsumerService(ObjectMapper objectMapper,
+                           SecretService secretService,
                            VerificationService verificationService,
                            DedupRepository dedupRepository,
                            LedgerRepository ledgerRepository,
                            DynamoDbClient dynamoDbClient,
                            @ConfigProperty(name = "thesis.replay-check.enabled", defaultValue = "true") boolean replayCheckEnabled,
                            @ConfigProperty(name = "thesis.replay-check.window-ms", defaultValue = "300000") long replayWindowMs) {
+        this.objectMapper = objectMapper;
         this.secretService = secretService;
         this.verificationService = verificationService;
         this.dedupRepository = dedupRepository;
@@ -83,7 +85,7 @@ public class ConsumerService {
 
     private SignedEvent readEventValue(String messageBodyJson) {
         try {
-            return MAPPER.readValue(messageBodyJson, SignedEvent.class);
+            return objectMapper.readValue(messageBodyJson, SignedEvent.class);
         } catch (Exception e) {
             throw new RuntimeException("Failed to process SQS message", e);
         }

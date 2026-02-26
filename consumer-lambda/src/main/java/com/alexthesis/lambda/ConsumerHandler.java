@@ -1,6 +1,6 @@
 package com.alexthesis.lambda;
 
-import com.alexthesis.crypto.KeySecret;
+import com.alexthesis.crypto.helpers.KeySecret;
 import com.alexthesis.messaging.Algorithm;
 import com.alexthesis.messaging.SignedContent;
 import com.alexthesis.messaging.SignedEvent;
@@ -52,6 +52,8 @@ public class ConsumerHandler implements RequestHandler<SQSEvent, SQSBatchRespons
     @Override
     public SQSBatchResponse handleRequest(SQSEvent event, Context context) {
         List<SQSBatchResponse.BatchItemFailure> failures = new ArrayList<>();
+
+        log.debugf("Received SQS batch with %d message(s)", event.getRecords().size());
 
         for (SQSEvent.SQSMessage message : event.getRecords()) {
             try {

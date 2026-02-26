@@ -1,5 +1,6 @@
 package com.alexthesis.crypto;
 
+import com.alexthesis.crypto.helpers.KeySecret;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

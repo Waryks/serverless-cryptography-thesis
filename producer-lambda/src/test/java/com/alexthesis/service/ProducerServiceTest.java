@@ -1,6 +1,6 @@
 package com.alexthesis.service;
 
-import com.alexthesis.crypto.KeySecret;
+import com.alexthesis.crypto.helpers.KeySecret;
 import com.alexthesis.crypto.SecretService;
 import com.alexthesis.crypto.SignatureService;
 import com.alexthesis.events.EventPublisher;
