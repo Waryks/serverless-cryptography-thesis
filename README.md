@@ -154,7 +154,7 @@ One of the key experimental variables is key caching:
 
 -   0 → no caching (baseline)
 
--   0 → cache enabled
+-   \>0 → cache enabled
 
 This allows measurement of mitigation strategies against cryptographic
 cold start overhead.

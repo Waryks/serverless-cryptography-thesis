@@ -1,8 +1,9 @@
 package com.alexthesis.crypto;
 
+import com.alexthesis.crypto.helpers.CryptoUtils;
+import com.alexthesis.crypto.helpers.KeySecret;
 import com.alexthesis.messaging.SignedContent;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
 import jakarta.enterprise.context.ApplicationScoped;
 
 import javax.crypto.Mac;
@@ -21,9 +22,9 @@ import java.util.Base64;
  * Supports HMAC-SHA256, RSA-PSS-SHA256, and ECDSA-P256-SHA256.
  *
  * <h2>Canonical serialisation</h2>
- * Uses the same deterministic byte representation as the producer's {@code SignatureService}:
- * {@link SerializationFeature#ORDER_MAP_ENTRIES_BY_KEYS} sorts record fields alphabetically,
- * ensuring the byte sequence is identical on both sides of the pipeline.
+ * Uses {@link CryptoUtils#canonicalise(SignedContent, ObjectMapper)} — the same deterministic
+ * byte representation as the producer's {@code SignatureService} — ensuring the byte
+ * sequence is identical on both sides of the pipeline.
  */
 @ApplicationScoped
 public class VerificationService {
@@ -31,8 +32,7 @@ public class VerificationService {
     private final ObjectMapper canonicalMapper;
 
     public VerificationService(ObjectMapper objectMapper) {
-        this.canonicalMapper = objectMapper.copy()
-                .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
+        this.canonicalMapper = CryptoUtils.canonicalMapper(objectMapper);
     }
 
     /**
@@ -57,14 +57,10 @@ public class VerificationService {
 
     /**
      * Produces the same deterministic byte representation as the producer.
-     * Must stay in sync with {@code SignatureService#canonicalise} on the producer side.
+     * Delegates to {@link CryptoUtils#canonicalise} to guarantee both sides stay in sync.
      */
     private byte[] canonicalise(SignedContent content) {
-        try {
-            return canonicalMapper.writeValueAsBytes(content);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to serialise SignedContent canonically", e);
-        }
+        return CryptoUtils.canonicalise(content, canonicalMapper);
     }
 
     /**
@@ -126,13 +122,8 @@ public class VerificationService {
         }
     }
 
-    /**
-     * Strips PEM header/footer lines and whitespace so the remaining string
-     * is pure Base64-encoded DER — works for both raw-Base64 and PEM inputs.
-     */
     private String stripPemHeaders(String pem) {
-        return pem.replaceAll("-----[^-]+-----", "")
-                  .replaceAll("\\s", "");
+        return CryptoUtils.stripPemHeaders(pem);
     }
 }
 

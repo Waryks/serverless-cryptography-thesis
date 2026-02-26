@@ -1,5 +1,6 @@
 package com.alexthesis.crypto;
 
+import com.alexthesis.crypto.helpers.KeySecret;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;

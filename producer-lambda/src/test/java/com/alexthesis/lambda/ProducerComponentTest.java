@@ -1,6 +1,6 @@
 package com.alexthesis.lambda;
 
-import com.alexthesis.crypto.KeySecret;
+import com.alexthesis.crypto.helpers.KeySecret;
 import com.alexthesis.crypto.TestKeyFixtures;
 import com.alexthesis.messaging.Algorithm;
 import com.alexthesis.messaging.SignedContent;

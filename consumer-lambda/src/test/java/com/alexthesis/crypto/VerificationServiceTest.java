@@ -1,5 +1,6 @@
 package com.alexthesis.crypto;
 
+import com.alexthesis.crypto.helpers.KeySecret;
 import com.alexthesis.messaging.Algorithm;
 import com.alexthesis.messaging.SignedContent;
 import com.fasterxml.jackson.databind.ObjectMapper;

@@ -1,6 +1,6 @@
 package com.alexthesis.lambda;
 
-import com.alexthesis.crypto.KeySecret;
+import com.alexthesis.crypto.helpers.KeySecret;
 import com.alexthesis.crypto.SecretService;
 import com.alexthesis.crypto.VerificationService;
 import com.alexthesis.dynamo.DedupRepository;
@@ -43,6 +43,7 @@ class ConsumerServiceTest {
     @BeforeEach
     void setUp() {
         consumerService = new ConsumerService(
+                MAPPER,
                 secretService, verificationService,
                 dedupRepository, ledgerRepository,
                 dynamoDbClient,
@@ -114,6 +115,7 @@ class ConsumerServiceTest {
     @Test
     void processMessage_replayCheckDisabled_expiredTimestampDoesNotThrow() throws Exception {
         consumerService = new ConsumerService(
+                MAPPER,
                 secretService, verificationService,
                 dedupRepository, ledgerRepository,
                 dynamoDbClient,
