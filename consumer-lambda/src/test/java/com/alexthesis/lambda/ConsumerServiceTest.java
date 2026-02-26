@@ -15,6 +15,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
+import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
+import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsResponse;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -22,26 +26,34 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
-/**
- * Unit tests for {@link ConsumerService}.
- * All collaborators are mocked — no Quarkus container, no AWS calls.
- */
 @ExtendWith(MockitoExtension.class)
 class ConsumerServiceTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final KeySecret DUMMY_SECRET = new KeySecret("key-1", "HMAC_SHA256", "dGVzdA==");
 
-    @Mock SecretService secretService;
+    @Mock SecretService      secretService;
     @Mock VerificationService verificationService;
-    @Mock DedupRepository dedupRepository;
-    @Mock LedgerRepository ledgerRepository;
+    @Mock DedupRepository    dedupRepository;
+    @Mock LedgerRepository   ledgerRepository;
+    @Mock DynamoDbClient     dynamoDbClient;
 
     private ConsumerService consumerService;
 
     @BeforeEach
     void setUp() {
-        consumerService = new ConsumerService(secretService, verificationService, dedupRepository, ledgerRepository, true, 300_000L);
+        consumerService = new ConsumerService(
+                secretService, verificationService,
+                dedupRepository, ledgerRepository,
+                dynamoDbClient,
+                true, 300_000L);
+        // Default: repositories return a dummy TransactWriteItem and the transaction succeeds.
+        // Marked lenient because tests that throw before the transaction (invalid sig, expired
+        // timestamp, malformed JSON, etc.) will not consume these stubs.
+        lenient().when(dedupRepository.buildTransactItem(any())).thenReturn(TransactWriteItem.builder().build());
+        lenient().when(ledgerRepository.buildTransactItem(any())).thenReturn(TransactWriteItem.builder().build());
+        lenient().when(dynamoDbClient.transactWriteItems(any(TransactWriteItemsRequest.class)))
+                .thenReturn(TransactWriteItemsResponse.builder().build());
     }
 
     @Test
@@ -101,7 +113,15 @@ class ConsumerServiceTest {
 
     @Test
     void processMessage_replayCheckDisabled_expiredTimestampDoesNotThrow() throws Exception {
-        consumerService = new ConsumerService(secretService, verificationService, dedupRepository, ledgerRepository, false, 300_000L);
+        consumerService = new ConsumerService(
+                secretService, verificationService,
+                dedupRepository, ledgerRepository,
+                dynamoDbClient,
+                false, 300_000L);
+        lenient().when(dedupRepository.buildTransactItem(any())).thenReturn(TransactWriteItem.builder().build());
+        lenient().when(ledgerRepository.buildTransactItem(any())).thenReturn(TransactWriteItem.builder().build());
+        lenient().when(dynamoDbClient.transactWriteItems(any(TransactWriteItemsRequest.class)))
+                .thenReturn(TransactWriteItemsResponse.builder().build());
         long expiredTimestamp = System.currentTimeMillis() - 400_000L;
         String body = buildMessageBody("evt-old", Algorithm.HMAC_SHA256, "key-1", expiredTimestamp);
         when(secretService.getSecret("key-1")).thenReturn(DUMMY_SECRET);

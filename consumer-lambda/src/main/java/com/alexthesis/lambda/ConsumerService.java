@@ -12,6 +12,9 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
+import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
 
 /**
  * Core business logic for the consumer Lambda.
@@ -28,6 +31,7 @@ public class ConsumerService {
     private final VerificationService verificationService;
     private final DedupRepository dedupRepository;
     private final LedgerRepository ledgerRepository;
+    private final DynamoDbClient dynamoDbClient;
     private final boolean replayCheckEnabled;
     private final long replayWindowMs;
 
@@ -36,12 +40,14 @@ public class ConsumerService {
                            VerificationService verificationService,
                            DedupRepository dedupRepository,
                            LedgerRepository ledgerRepository,
+                           DynamoDbClient dynamoDbClient,
                            @ConfigProperty(name = "thesis.replay-check.enabled", defaultValue = "true") boolean replayCheckEnabled,
                            @ConfigProperty(name = "thesis.replay-check.window-ms", defaultValue = "300000") long replayWindowMs) {
         this.secretService = secretService;
         this.verificationService = verificationService;
         this.dedupRepository = dedupRepository;
         this.ledgerRepository = ledgerRepository;
+        this.dynamoDbClient = dynamoDbClient;
         this.replayCheckEnabled = replayCheckEnabled;
         this.replayWindowMs = replayWindowMs;
     }
@@ -70,12 +76,9 @@ public class ConsumerService {
         }
 
         processWindow(content);
+        persistToLedgerAndDedup(content);
 
-        dedupRepository.checkAndInsert(content);
-        ledgerRepository.save(content);
-
-        log.info("Processed message with eventId: " + content.eventId()
-                + " algorithm: " + content.algorithm());
+        log.infof("Processed eventId=%s algorithm=%s", content.eventId(), content.algorithm());
     }
 
     private SignedEvent readEventValue(String messageBodyJson) {
@@ -102,18 +105,53 @@ public class ConsumerService {
             throw new ReplayWindowException("Replay window exceeded. Event age: " + age + "ms");
         }
     }
+    
+    private void persistToLedgerAndDedup(SignedContent content) {
+        try {
+            dynamoDbClient.transactWriteItems(TransactWriteItemsRequest.builder()
+                    .transactItems(
+                            ledgerRepository.buildTransactItem(content),
+                            dedupRepository.buildTransactItem(content)
+                    )
+                    .build());
+        } catch (TransactionCanceledException e) {
+            throw new DuplicateEventException("Duplicate eventId detected: " + content.eventId(), e);
+        }
+    }
+
+    /**
+     * Base class for all security-policy rejections.
+     * The handler catches this single type to discard any message that violates
+     * the security policy — without redelivery — regardless of which specific
+     * check failed.
+     */
+    public static class SecurityRejectionException extends RuntimeException {
+        public SecurityRejectionException(String message) {
+            super(message);
+        }
+        public SecurityRejectionException(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
 
     /** Thrown when signature verification fails. */
-    public static class InvalidSignatureException extends RuntimeException {
+    public static class InvalidSignatureException extends SecurityRejectionException {
         public InvalidSignatureException(String message) {
             super(message);
         }
     }
 
     /** Thrown when an event arrives outside the allowed timestamp window. */
-    public static class ReplayWindowException extends RuntimeException {
+    public static class ReplayWindowException extends SecurityRejectionException {
         public ReplayWindowException(String message) {
             super(message);
+        }
+    }
+
+    /** Thrown when the dedup+ledger transaction is cancelled due to a duplicate eventId. */
+    public static class DuplicateEventException extends SecurityRejectionException {
+        public DuplicateEventException(String message, Throwable cause) {
+            super(message, cause);
         }
     }
 }

@@ -39,11 +39,13 @@ public class QueuePublisher implements EventPublisher {
         try {
             String message = objectMapper.writeValueAsString(event);
 
-            sqsClient.sendMessage(m -> m
+            var response = sqsClient.sendMessage(m -> m
                     .queueUrl(queueUrl)
                     .messageBody(message));
 
-            log.info("Sent message to queue: " + message);
+            log.infof("Published eventId=%s messageId=%s",
+                    event.content().eventId(), response.messageId());
+            log.debugf("Full message body: %s", message);
         } catch (Exception e) {
             throw new RuntimeException("Failed to publish event to SQS", e);
         }

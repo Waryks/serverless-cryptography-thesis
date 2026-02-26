@@ -8,6 +8,8 @@ import org.jboss.logging.Logger;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
+import software.amazon.awssdk.services.dynamodb.model.Put;
+import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 
 import java.util.Map;
 
@@ -50,27 +52,57 @@ public class DedupRepository extends DynamoRepository {
 
     /**
      * Attempts to insert a deduplication record for the given event.
+     * Used for standalone dedup writes (e.g. in tests).
+     * For production use, prefer {@link #buildTransactItem(SignedContent)} combined
+     * with a {@code TransactWriteItems} call from {@code ConsumerService}.
      *
      * @param content the signed event content whose {@code eventId} must be unique
-     * @throws DuplicateEventException if a record with the same {@code eventId} already exists
+     * @throws RuntimeException wrapping {@link ConditionalCheckFailedException} if a duplicate is detected
      */
     public void checkAndInsert(SignedContent content) {
         long ttlEpochSeconds = (System.currentTimeMillis() / 1000L) + dedupTtlSeconds;
-
         Map<String, AttributeValue> item = Map.of(
                 "eventId", AttributeValue.fromS(content.eventId()),
                 "ttl",     AttributeValue.fromN(String.valueOf(ttlEpochSeconds))
         );
 
+        insertDedupRecord(item, content.eventId());
+    }
+
+    /**
+     * Builds a {@link TransactWriteItem} for use inside a {@code TransactWriteItems} request.
+     * The {@code attribute_not_exists(eventId)} condition is included so a replay will cause
+     * the entire transaction to fail atomically.
+     *
+     * @param content the event whose dedup entry should be written
+     * @return a transact-write item ready to be combined with other items in the same transaction
+     */
+    public TransactWriteItem buildTransactItem(SignedContent content) {
+        long ttlEpochSeconds = (System.currentTimeMillis() / 1000L) + dedupTtlSeconds;
+        Map<String, AttributeValue> item = Map.of(
+                "eventId", AttributeValue.fromS(content.eventId()),
+                "ttl",     AttributeValue.fromN(String.valueOf(ttlEpochSeconds))
+        );
+
+        return TransactWriteItem.builder()
+                .put(Put.builder()
+                        .tableName(table)
+                        .item(item)
+                        .conditionExpression("attribute_not_exists(eventId)")
+                        .build())
+                .build();
+    }
+
+    private void insertDedupRecord(Map<String, AttributeValue> item, String eventId) {
         try {
             dynamoDbClient.putItem(builder -> builder
                     .tableName(table)
                     .item(item)
                     .conditionExpression("attribute_not_exists(eventId)")
             );
-            log.debugf("Dedup record inserted for eventId: %s", content.eventId());
+            log.debugf("Dedup record inserted for eventId: %s", eventId);
         } catch (ConditionalCheckFailedException e) {
-            throw new DuplicateEventException("Duplicate eventId detected: " + content.eventId(), e);
+            throw new RuntimeException("Duplicate eventId detected: " + eventId, e);
         }
     }
 
@@ -78,12 +110,4 @@ public class DedupRepository extends DynamoRepository {
     protected String tableName() {
         return table;
     }
-
-    /** Thrown when an event with the same {@code eventId} has already been processed. */
-    public static class DuplicateEventException extends RuntimeException {
-        public DuplicateEventException(String message, Throwable cause) {
-            super(message, cause);
-        }
-    }
 }
-
