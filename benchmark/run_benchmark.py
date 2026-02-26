@@ -16,6 +16,9 @@ Research variables (from .github/overall_implementation_details.md):
     --cold-start      stop + remove the LocalStack container before the run
                       so the first invocation is a genuine partial cold start
     --warm-only       skip the restart; measure warm invocation latency only
+    --native          build & deploy as GraalVM Native Image (provided.al2023 runtime)
+                      instead of the default JVM mode (java21 runtime).
+                      Requires Docker for the in-container native build.
 
 LocalStack is started with the Docker socket mounted so Lambda containers
 can be spawned via the Docker daemon. With Colima, /var/run/docker.sock
@@ -38,10 +41,15 @@ Secrets Manager secret schema (commons KeySecret record):
     { "keyId": "<name>", "algorithm": "<algo>", "keyMaterial": "<base64>" }
 
 Usage:
-    # Cold-start baseline for each algorithm
+    # Cold-start baseline for each algorithm (JVM mode — default)
     python benchmark/run_benchmark.py --algorithm HMAC_SHA256       --cold-start
     python benchmark/run_benchmark.py --algorithm RSA_PSS_SHA256    --cold-start
     python benchmark/run_benchmark.py --algorithm ECDSA_P256_SHA256 --cold-start
+
+    # Same benchmarks in Native Image mode
+    python benchmark/run_benchmark.py --algorithm HMAC_SHA256       --cold-start --native
+    python benchmark/run_benchmark.py --algorithm RSA_PSS_SHA256    --cold-start --native
+    python benchmark/run_benchmark.py --algorithm ECDSA_P256_SHA256 --cold-start --native
 
     # Mitigation: 60 s key cache, warm container, 50 invocations
     python benchmark/run_benchmark.py --algorithm RSA_PSS_SHA256 --warm-only --cache-ttl 60 --invocations 50
@@ -74,6 +82,7 @@ from botocore.exceptions import ClientError
 LOCALSTACK_HOST: str     = ""   # e.g. "localhost"
 LOCALSTACK_ENDPOINT: str = ""   # e.g. "http://localhost:4566"
 DOCKER_SOCKET: str       = ""   # path to Docker socket
+NATIVE_MODE: bool        = False  # True when --native is passed
 
 # ---------------------------------------------------------------------------
 # Static constants — must stay in sync with application.properties and commons
@@ -94,8 +103,22 @@ LAMBDA_ROLE_NAME       = "thesis-lambda-role"
 # ---------------------------------------------------------------------------
 # Runtime / artifact settings
 # ---------------------------------------------------------------------------
-LAMBDA_RUNTIME = "java21"
-LAMBDA_HANDLER = "io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest"
+LAMBDA_RUNTIME_JVM    = "java21"
+LAMBDA_RUNTIME_NATIVE = "provided.al2023"
+LAMBDA_HANDLER        = "io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest"
+LAMBDA_HANDLER_NATIVE = "not.used.in" + ".native.mode"   # native bootstrap ignores this
+
+
+def _lambda_runtime() -> str:
+    return LAMBDA_RUNTIME_NATIVE if NATIVE_MODE else LAMBDA_RUNTIME_JVM
+
+
+def _lambda_handler() -> str:
+    return LAMBDA_HANDLER_NATIVE if NATIVE_MODE else LAMBDA_HANDLER
+
+
+def _runtime_label() -> str:
+    return "native" if NATIVE_MODE else "JVM"
 
 # One Secrets Manager secret per algorithm.
 # HMAC   — symmetric: same secret used by producer and consumer.
@@ -172,7 +195,12 @@ def _resolve_docker_socket() -> str:
 
 def start_localstack():
     socket = _resolve_docker_socket()
-    print(f"[localstack] Starting '{LOCALSTACK_CONTAINER_NAME}'  socket={socket}")
+    # Native cold starts can take 60-120 s inside LocalStack-managed Lambda
+    # containers.  The default LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT (≈25 s) is
+    # far too short, causing "Timeout while starting up lambda environment".
+    env_timeout = 300 if NATIVE_MODE else 120
+    print(f"[localstack] Starting '{LOCALSTACK_CONTAINER_NAME}'  socket={socket}  "
+          f"lambda_env_timeout={env_timeout}s")
     subprocess.run(
         [
             "docker", "run", "-d",
@@ -180,6 +208,7 @@ def start_localstack():
             "-p", "4566:4566",
             "-p", "4510-4559:4510-4559",
             "-e", "DEBUG=1",
+            "-e", f"LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT={env_timeout}",
             "-v", f"{socket}:/var/run/docker.sock",
             LOCALSTACK_IMAGE,
         ],
@@ -371,7 +400,15 @@ def _wait_for_lambda_updatable(name: str, timeout: int = 60):
 
 def build_artifacts():
     """
-    Build producer-lambda and consumer-lambda with Maven (JVM mode).
+    Build producer-lambda and consumer-lambda with Maven.
+
+    In JVM mode (default):
+        mvn package -DskipTests
+
+    In native mode (--native):
+        mvn package -DskipTests -Dnative -Dquarkus.native.container-build=true
+        This produces a Linux-amd64 native executable inside a Docker container,
+        which is required when building on macOS / non-Linux hosts.
 
     Called automatically by provision_lambda() when the expected zip is not
     found, so the user never needs to run mvn manually.
@@ -389,7 +426,11 @@ def build_artifacts():
         "-pl", "commons,producer-lambda,consumer-lambda",
     ]
 
-    print(f"\n[build] Building artifacts  mode=JVM")
+    if NATIVE_MODE:
+        cmd += ["-Dnative", "-Dquarkus.native.container-build=true"]
+
+    mode_label = _runtime_label()
+    print(f"\n[build] Building artifacts  mode={mode_label}")
     print(f"[build] Command: {' '.join(cmd)}\n")
 
     result = subprocess.run(cmd, cwd=REPO_ROOT)
@@ -399,7 +440,21 @@ def build_artifacts():
             f"        Run manually to see full output:\n"
             f"        {' '.join(cmd)}"
         )
-    print("[build] Build successful.\n")
+    print(f"[build] Build successful ({mode_label}).\n")
+
+
+def _host_architecture() -> str:
+    """
+    Return the Lambda-API architecture string that matches the host machine.
+    Native images built with -Dquarkus.native.container-build=true compile for
+    the host's architecture, so the Lambda function must be created with a
+    matching Architectures value.  JVM mode is architecture-agnostic.
+    """
+    import platform
+    machine = platform.machine().lower()
+    if machine in ("aarch64", "arm64"):
+        return "arm64"
+    return "x86_64"
 
 
 def provision_lambda(name: str, zip_path: Path, role_arn: str, env_vars: dict):
@@ -411,33 +466,41 @@ def provision_lambda(name: str, zip_path: Path, role_arn: str, env_vars: dict):
                 f"[ERROR] Artifact still missing after build: {zip_path}\n"
                 f"        Check Maven output above for compilation errors."
             )
+
+    runtime = _lambda_runtime()
+    handler = _lambda_handler()
+    timeout    = 300 if NATIVE_MODE else 60    # native cold starts need more headroom in LocalStack
+    memory_mb  = 1024 if NATIVE_MODE else 512  # extra memory helps native startup speed
+    arch       = _host_architecture() if NATIVE_MODE else "x86_64"
+
     lam   = _lambda()
     zdata = zip_path.read_bytes()
     try:
         resp = lam.create_function(
-            FunctionName = name,
-            Runtime      = LAMBDA_RUNTIME,
-            Role         = role_arn,
-            Handler      = LAMBDA_HANDLER,
-            Code         = {"ZipFile": zdata},
-            Timeout      = 60,
-            MemorySize   = 512,
-            Environment  = {"Variables": env_vars},
+            FunctionName  = name,
+            Runtime       = runtime,
+            Role          = role_arn,
+            Handler       = handler,
+            Code          = {"ZipFile": zdata},
+            Timeout       = timeout,
+            MemorySize    = memory_mb,
+            Architectures = [arch],
+            Environment   = {"Variables": env_vars},
         )
-        print(f"[lambda] Created '{name}' ({resp['FunctionArn']})  runtime={LAMBDA_RUNTIME}")
+        print(f"[lambda] Created '{name}' ({resp['FunctionArn']})  runtime={runtime}  arch={arch}")
     except ClientError as e:
         if e.response["Error"]["Code"] == "ResourceConflictException":
             # Function already exists — update code first, wait, then update config
             _wait_for_lambda_updatable(name)
-            lam.update_function_code(FunctionName=name, ZipFile=zdata)
+            lam.update_function_code(FunctionName=name, ZipFile=zdata, Architectures=[arch])
             _wait_for_lambda_updatable(name)
             lam.update_function_configuration(
                 FunctionName = name,
-                Runtime      = LAMBDA_RUNTIME,
-                Handler      = LAMBDA_HANDLER,
+                Runtime      = runtime,
+                Handler      = handler,
                 Environment  = {"Variables": env_vars},
             )
-            print(f"[lambda] Updated '{name}'  runtime={LAMBDA_RUNTIME}")
+            print(f"[lambda] Updated '{name}'  runtime={runtime}  arch={arch}")
         else:
             raise
 
@@ -514,6 +577,11 @@ def provision_all(cache_ttl: int) -> str:
         "THESIS_DYNAMODB_DEDUP_TTL_SECONDS":        "300",
     }
 
+    # Quarkus native Lambda requires DISABLE_SIGNAL_HANDLERS to avoid hanging
+    # during startup inside the Lambda container (see manage.sh / sam.native.yaml).
+    if NATIVE_MODE:
+        env["DISABLE_SIGNAL_HANDLERS"] = "true"
+
     provision_lambda(PRODUCER_FUNCTION_NAME, PRODUCER_ZIP, role_arn, env)
     provision_lambda(CONSUMER_FUNCTION_NAME, CONSUMER_ZIP, role_arn, env)
     provision_sqs_trigger(queue_url)
@@ -538,8 +606,10 @@ def _fetch_localstack_logs(function_name: str, lines: int = 50) -> str:
         return f"(could not fetch logs: {e})"
 
 
-def _wait_for_lambda_active(function_name: str, timeout: int = 60):
+def _wait_for_lambda_active(function_name: str, timeout: int = None):
     """Poll until Active; abort with container logs on Failed."""
+    if timeout is None:
+        timeout = 300 if NATIVE_MODE else 60
     lam      = _lambda()
     deadline = time.time() + timeout
     print(f"[health] Waiting for Lambda '{function_name}' …", end="", flush=True)
@@ -653,7 +723,7 @@ def run_benchmark(algorithm: str, invocations: int, run_id: str) -> list[dict]:
     key_id  = KEY_SECRET_NAMES[algorithm]
     results = []
 
-    print(f"\n[bench]  algorithm={algorithm}  invocations={invocations}  run={run_id}")
+    print(f"\n[bench]  algorithm={algorithm}  invocations={invocations}  run={run_id}  runtime={_runtime_label()}")
     print(f"[bench]  keyId={key_id}")
     print("-" * 60)
 
@@ -689,7 +759,7 @@ def print_summary(results: list[dict], algorithm: str, cache_ttl: int):
     errors  = [r for r in results if "error" in r]
 
     print("\n" + "=" * 60)
-    print(f"  RESULTS  algorithm={algorithm}  cache-ttl={cache_ttl}s")
+    print(f"  RESULTS  algorithm={algorithm}  cache-ttl={cache_ttl}s  runtime={_runtime_label()}")
     print("=" * 60)
     print(f"  Total invocations : {len(results)}")
     print(f"  Errors            : {len(errors)}")
@@ -718,13 +788,19 @@ Research variables (thesis specification):
   --cache-ttl    Key-cache TTL: 0=baseline (no cache), >0=mitigation
   --cold-start   Restart LocalStack -> guaranteed partial cold start
   --warm-only    Reuse container -> warm invocation latency only
+  --native       Build & deploy as GraalVM Native Image (provided.al2023)
   --invocations  Sample size for percentile calculations (P50/P95/P99)
 
 Examples:
-  # Cold-start baseline for each algorithm
+  # Cold-start baseline for each algorithm (JVM)
   python run_benchmark.py --algorithm HMAC_SHA256       --cold-start
   python run_benchmark.py --algorithm RSA_PSS_SHA256    --cold-start
   python run_benchmark.py --algorithm ECDSA_P256_SHA256 --cold-start
+
+  # Same benchmarks in Native Image mode
+  python run_benchmark.py --algorithm HMAC_SHA256       --cold-start --native
+  python run_benchmark.py --algorithm RSA_PSS_SHA256    --cold-start --native
+  python run_benchmark.py --algorithm ECDSA_P256_SHA256 --cold-start --native
 
   # Mitigation: 60 s key cache, warm container, 50 invocations
   python run_benchmark.py --algorithm RSA_PSS_SHA256 --warm-only --cache-ttl 60 --invocations 50
@@ -754,6 +830,16 @@ Examples:
         default=0,
         metavar="SECONDS",
         help="Key-cache TTL: 0=off/baseline, >0=on/mitigation (default: 0)",
+    )
+    parser.add_argument(
+        "--native",
+        action="store_true",
+        default=False,
+        help=(
+            "Build and deploy as GraalVM Native Image instead of JVM. "
+            "Uses provided.al2023 runtime and -Dnative Maven profile. "
+            "Requires Docker for the in-container native compilation."
+        ),
     )
 
     mode = parser.add_mutually_exclusive_group()
@@ -802,13 +888,14 @@ def main():
     args   = parse_args()
     run_id = str(uuid.uuid4())[:8]
 
-    global LOCALSTACK_HOST, LOCALSTACK_ENDPOINT, DOCKER_SOCKET
+    global LOCALSTACK_HOST, LOCALSTACK_ENDPOINT, DOCKER_SOCKET, NATIVE_MODE
     global _artifacts_built
     _artifacts_built = False
 
     LOCALSTACK_HOST     = args.localstack_host
     LOCALSTACK_ENDPOINT = f"http://{LOCALSTACK_HOST}:4566"
     DOCKER_SOCKET       = args.docker_socket
+    NATIVE_MODE         = args.native
 
     print(f"\n{'='*60}")
     print(f"  Thesis Benchmark  —  run_id={run_id}")
@@ -816,7 +903,7 @@ def main():
     print(f"  invocations  : {args.invocations}")
     print(f"  cache-ttl    : {args.cache_ttl}s")
     print(f"  cold-start   : {args.cold_start}")
-    print(f"  runtime      : {LAMBDA_RUNTIME}")
+    print(f"  runtime      : {_runtime_label()} ({_lambda_runtime()})")
     print(f"  localstack   : {LOCALSTACK_ENDPOINT}")
     print(f"  docker socket: {_resolve_docker_socket()}")
     print(f"{'='*60}\n")

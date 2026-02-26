@@ -108,7 +108,7 @@ All reported cold start metrics therefore represent *application-level initializ
 3.  Parsed key object caching with TTL
 4.  Eager initialization vs Lazy initialization
 5.  Single-key vs Dual-key verification (rotation overhead)
-6.  JVM mode vs Native Image (optional advanced comparison)
+6.  JVM mode vs Native Image (GraalVM native build via `--native` flag)
 7.  Canonical payload serialization
 
 ------------------------------------------------------------------------

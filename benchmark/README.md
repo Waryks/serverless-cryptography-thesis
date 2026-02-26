@@ -19,7 +19,11 @@ LocalStack is managed with plain `docker run` — no docker-compose needed.
 Build all Lambda artifacts from the repo root:
 
 ```bash
+# JVM mode (default)
 mvn -q package -DskipTests -f pom.xml
+
+# Native Image mode (requires Docker for container build)
+mvn -q package -DskipTests -Dnative -Dquarkus.native.container-build=true -f pom.xml
 ```
 
 Install Python deps:
@@ -59,6 +63,7 @@ non-standard socket path.
 | `--cache-ttl` | `0` (baseline) / `>0` (mitigation) | `thesis.keys.cache.ttlSeconds` |
 | `--cold-start` | flag | Stop + remove container → guaranteed partial cold start |
 | `--warm-only` | flag | Reuse existing container → warm invocation baseline |
+| `--native` | flag | Build & deploy as GraalVM Native Image (`provided.al2023`) instead of JVM (`java21`) |
 | `--invocations` | integer | Number of Lambda calls (more = better P95/P99 coverage) |
 | `--localstack-host` | hostname/IP | LocalStack host (default: `localhost`) |
 | `--docker-socket` | path | Docker socket override (default: auto-detected, see above) |
@@ -68,16 +73,24 @@ non-standard socket path.
 ## Usage
 
 ```bash
-# Baseline cold-start run for each algorithm
+# Baseline cold-start run for each algorithm (JVM mode — default)
 python benchmark/run_benchmark.py --algorithm HMAC_SHA256       --cold-start
 python benchmark/run_benchmark.py --algorithm RSA_PSS_SHA256    --cold-start
 python benchmark/run_benchmark.py --algorithm ECDSA_P256_SHA256 --cold-start
+
+# Same benchmarks in Native Image mode
+python benchmark/run_benchmark.py --algorithm HMAC_SHA256       --cold-start --native
+python benchmark/run_benchmark.py --algorithm RSA_PSS_SHA256    --cold-start --native
+python benchmark/run_benchmark.py --algorithm ECDSA_P256_SHA256 --cold-start --native
 
 # Mitigation: 60 s key cache, 50 warm invocations
 python benchmark/run_benchmark.py --algorithm RSA_PSS_SHA256 --warm-only --cache-ttl 60 --invocations 50
 
 # Provision resources only (no Lambda invocations)
 python benchmark/run_benchmark.py --provision-only
+
+# Provision with native artifacts
+python benchmark/run_benchmark.py --provision-only --native
 
 # LocalStack already running — skip docker run
 python benchmark/run_benchmark.py --skip-start --algorithm HMAC_SHA256
