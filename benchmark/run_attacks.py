@@ -222,6 +222,20 @@ def _sign(content: dict, algorithm: str, secret: dict) -> str:
     raise ValueError(f"Unknown algorithm: {algorithm}")
 
 
+def _resolve_signing_secret_name(algorithm: str, key_id: str) -> str:
+    """
+    Return the Secrets Manager name that holds the **signing** key.
+
+    The keyId in SignedContent always identifies the verification key
+    (the one the consumer fetches).  For HMAC (symmetric) the same
+    secret is used for signing.  For RSA / ECDSA the private signing
+    key is stored under keyId + "/private".
+    """
+    if algorithm == "HMAC_SHA256":
+        return key_id
+    return key_id + "/private"
+
+
 def _build_content(algorithm: str, key_id: str,
                    event_id: str = None,
                    timestamp_ms: int = None) -> dict:
@@ -252,7 +266,7 @@ def attack_tampered_payload(algorithm: str, queue_url: str) -> bool:
     print(f"  algorithm : {algorithm}")
 
     key_id    = KEY_SECRET_NAMES[algorithm]
-    secret    = _get_secret(key_id)
+    secret    = _get_secret(_resolve_signing_secret_name(algorithm, key_id))
     event_id  = str(uuid.uuid4())
     content   = _build_content(algorithm, key_id, event_id=event_id)
 
@@ -295,7 +309,7 @@ def attack_replay(algorithm: str, queue_url: str) -> bool:
     print(f"  algorithm : {algorithm}")
 
     key_id   = KEY_SECRET_NAMES[algorithm]
-    secret   = _get_secret(key_id)
+    secret   = _get_secret(_resolve_signing_secret_name(algorithm, key_id))
     event_id = str(uuid.uuid4())
     content  = _build_content(algorithm, key_id, event_id=event_id)
     sig      = _sign(content, algorithm, secret)
@@ -346,7 +360,7 @@ def attack_expired_timestamp(algorithm: str, queue_url: str) -> bool:
     print(f"  algorithm : {algorithm}")
 
     key_id    = KEY_SECRET_NAMES[algorithm]
-    secret    = _get_secret(key_id)
+    secret    = _get_secret(_resolve_signing_secret_name(algorithm, key_id))
     event_id  = str(uuid.uuid4())
 
     # Timestamp is 10 minutes older than the 5-minute replay window

@@ -342,24 +342,24 @@ def provision_secrets():
     _upsert(KEY_SECRET_NAMES["RSA_PSS_SHA256"], {
         "keyId": KEY_SECRET_NAMES["RSA_PSS_SHA256"],
         "algorithm": "RSA_PSS_SHA256",
-        "keyMaterial": rsa_priv,
-    })
-    _upsert(KEY_SECRET_NAMES["RSA_PSS_SHA256"] + "/public", {
-        "keyId": KEY_SECRET_NAMES["RSA_PSS_SHA256"] + "/public",
-        "algorithm": "RSA_PSS_SHA256",
         "keyMaterial": rsa_pub,
+    })
+    _upsert(KEY_SECRET_NAMES["RSA_PSS_SHA256"] + "/private", {
+        "keyId": KEY_SECRET_NAMES["RSA_PSS_SHA256"] + "/private",
+        "algorithm": "RSA_PSS_SHA256",
+        "keyMaterial": rsa_priv,
     })
 
     ec_priv, ec_pub = _ec_keypair_b64()
     _upsert(KEY_SECRET_NAMES["ECDSA_P256_SHA256"], {
         "keyId": KEY_SECRET_NAMES["ECDSA_P256_SHA256"],
         "algorithm": "ECDSA_P256_SHA256",
-        "keyMaterial": ec_priv,
-    })
-    _upsert(KEY_SECRET_NAMES["ECDSA_P256_SHA256"] + "/public", {
-        "keyId": KEY_SECRET_NAMES["ECDSA_P256_SHA256"] + "/public",
-        "algorithm": "ECDSA_P256_SHA256",
         "keyMaterial": ec_pub,
+    })
+    _upsert(KEY_SECRET_NAMES["ECDSA_P256_SHA256"] + "/private", {
+        "keyId": KEY_SECRET_NAMES["ECDSA_P256_SHA256"] + "/private",
+        "algorithm": "ECDSA_P256_SHA256",
+        "keyMaterial": ec_priv,
     })
 
 
