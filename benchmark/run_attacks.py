@@ -49,13 +49,14 @@ import subprocess
 import sys
 import time
 import uuid
-from pathlib import Path
 
 import boto3
-from botocore.exceptions import ClientError
+
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ec import SECP256R1, generate_private_key as ec_gen
-from cryptography.hazmat.primitives.asymmetric.rsa import generate_private_key as rsa_gen
+from cryptography.hazmat.primitives import hashes
+
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric import ec
 
 # ---------------------------------------------------------------------------
 # Runtime globals — set in main()
@@ -129,6 +130,7 @@ def _item_exists_in_dynamo(table: str, event_id: str) -> bool:
         TableName = table,
         Key       = {"eventId": {"S": event_id}},
     )
+
     return "Item" in resp
 
 
@@ -138,6 +140,7 @@ def _recent_consumer_logs(lines: int = 100) -> str:
             ["docker", "logs", "--tail", str(lines), LOCALSTACK_CONTAINER],
             capture_output=True, text=True,
         )
+
         return result.stdout + result.stderr
     except Exception as e:
         return f"(could not read logs: {e})"
@@ -171,6 +174,7 @@ def _canonical_bytes(content: dict) -> bytes:
         "keyId":            content["keyId"],
         "payload":          content["payload"],
     }
+
     return json.dumps(ordered, separators=(",", ":")).encode()
 
 # ---------------------------------------------------------------------------
@@ -180,15 +184,11 @@ def _canonical_bytes(content: dict) -> bytes:
 def _sign_hmac(content: dict, key_b64: str) -> str:
     key   = base64.b64decode(key_b64)
     mac   = hmac_lib.new(key, _canonical_bytes(content), hashlib.sha256)
+
     return base64.b64encode(mac.digest()).decode()
 
 
 def _sign_rsa_pss(content: dict, priv_b64: str) -> str:
-    from cryptography.hazmat.primitives.asymmetric import padding
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.asymmetric.rsa import (
-        RSAPrivateKey,
-    )
     der  = base64.b64decode(priv_b64)
     key  = serialization.load_der_private_key(der, password=None)
     sig  = key.sign(
@@ -199,15 +199,15 @@ def _sign_rsa_pss(content: dict, priv_b64: str) -> str:
         ),
         hashes.SHA256(),
     )
+
     return base64.b64encode(sig).decode()
 
 
 def _sign_ecdsa(content: dict, priv_b64: str) -> str:
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.hazmat.primitives import hashes
     der  = base64.b64decode(priv_b64)
     key  = serialization.load_der_private_key(der, password=None)
     sig  = key.sign(_canonical_bytes(content), ec.ECDSA(hashes.SHA256()))
+
     return base64.b64encode(sig).decode()
 
 
@@ -218,7 +218,22 @@ def _sign(content: dict, algorithm: str, secret: dict) -> str:
         return _sign_rsa_pss(content, secret["keyMaterial"])
     if algorithm == "ECDSA_P256_SHA256":
         return _sign_ecdsa(content, secret["keyMaterial"])
+
     raise ValueError(f"Unknown algorithm: {algorithm}")
+
+
+def _resolve_signing_secret_name(algorithm: str, key_id: str) -> str:
+    """
+    Return the Secrets Manager name that holds the **signing** key.
+
+    The keyId in SignedContent always identifies the verification key
+    (the one the consumer fetches).  For HMAC (symmetric) the same
+    secret is used for signing.  For RSA / ECDSA the private signing
+    key is stored under keyId + "/private".
+    """
+    if algorithm == "HMAC_SHA256":
+        return key_id
+    return key_id + "/private"
 
 
 def _build_content(algorithm: str, key_id: str,
@@ -251,7 +266,7 @@ def attack_tampered_payload(algorithm: str, queue_url: str) -> bool:
     print(f"  algorithm : {algorithm}")
 
     key_id    = KEY_SECRET_NAMES[algorithm]
-    secret    = _get_secret(key_id)
+    secret    = _get_secret(_resolve_signing_secret_name(algorithm, key_id))
     event_id  = str(uuid.uuid4())
     content   = _build_content(algorithm, key_id, event_id=event_id)
 
@@ -276,6 +291,7 @@ def attack_tampered_payload(algorithm: str, queue_url: str) -> bool:
     print(f"  Ledger entry    : {'absent (correct)' if not in_ledger else 'PRESENT (wrong)'}")
     print(f"  Exception in log: {'yes' if in_logs else 'not detected (may be log timing)'}")
     _pass("Tampered payload was correctly rejected.")
+
     return True
 
 # ---------------------------------------------------------------------------
@@ -293,7 +309,7 @@ def attack_replay(algorithm: str, queue_url: str) -> bool:
     print(f"  algorithm : {algorithm}")
 
     key_id   = KEY_SECRET_NAMES[algorithm]
-    secret   = _get_secret(key_id)
+    secret   = _get_secret(_resolve_signing_secret_name(algorithm, key_id))
     event_id = str(uuid.uuid4())
     content  = _build_content(algorithm, key_id, event_id=event_id)
     sig      = _sign(content, algorithm, secret)
@@ -310,6 +326,7 @@ def attack_replay(algorithm: str, queue_url: str) -> bool:
     if not in_ledger:
         _fail("First delivery was NOT written to ledger — legitimate event was rejected!")
         return False
+
     print(f"  First delivery  : ledger={'yes'}, dedup={'yes' if in_dedup else 'no'}")
 
     # Second delivery — same message, must be rejected
@@ -325,6 +342,7 @@ def attack_replay(algorithm: str, queue_url: str) -> bool:
     )
     print(f"  Dedup rejection : {'detected in logs' if duplicate_in_logs else 'not detected in logs (may be timing)'}")
     _pass("Replay attack correctly handled: first accepted, second rejected by dedup.")
+
     return True
 
 # ---------------------------------------------------------------------------
@@ -342,7 +360,7 @@ def attack_expired_timestamp(algorithm: str, queue_url: str) -> bool:
     print(f"  algorithm : {algorithm}")
 
     key_id    = KEY_SECRET_NAMES[algorithm]
-    secret    = _get_secret(key_id)
+    secret    = _get_secret(_resolve_signing_secret_name(algorithm, key_id))
     event_id  = str(uuid.uuid4())
 
     # Timestamp is 10 minutes older than the 5-minute replay window
@@ -367,6 +385,7 @@ def attack_expired_timestamp(algorithm: str, queue_url: str) -> bool:
     print(f"  Dedup entry     : {'absent (correct)' if not in_dedup  else 'PRESENT (wrong)'}")
     print(f"  Exception in log: {'yes' if in_logs else 'not detected (may be log timing)'}")
     _pass("Expired timestamp correctly rejected.")
+
     return True
 
 # ---------------------------------------------------------------------------
@@ -435,6 +454,7 @@ Examples:
         metavar="SECONDS",
         help="Seconds to wait for the consumer to process each message (default: 8)",
     )
+
     return parser.parse_args()
 
 
@@ -478,11 +498,13 @@ def main():
     print(f"  SUMMARY")
     print(f"{'='*60}")
     all_passed = True
+
     for name, passed in results.items():
         status = f"{_GREEN}PASS{_RESET}" if passed else f"{_RED}FAIL{_RESET}"
         print(f"  {name:<10} {status}")
         if not passed:
             all_passed = False
+
     print(f"{'='*60}\n")
 
     sys.exit(0 if all_passed else 1)

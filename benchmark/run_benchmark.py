@@ -75,6 +75,14 @@ import boto3
 from botocore.config import Config as BotocoreConfig
 from botocore.exceptions import ClientError
 
+import urllib.request
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.rsa import generate_private_key as generate_private_key_rsa
+from cryptography.hazmat.primitives.asymmetric.ec import generate_private_key as generate_private_key_ec, SECP256R1
+
+import platform
+
 # ---------------------------------------------------------------------------
 # Runtime globals — populated in main() from CLI args / env vars
 # ---------------------------------------------------------------------------
@@ -190,6 +198,7 @@ def _resolve_docker_socket() -> str:
     """
     if DOCKER_SOCKET:
         return DOCKER_SOCKET
+
     return "/var/run/docker.sock"
 
 
@@ -199,8 +208,10 @@ def start_localstack():
     # containers.  The default LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT (≈25 s) is
     # far too short, causing "Timeout while starting up lambda environment".
     env_timeout = 300 if NATIVE_MODE else 120
+
     print(f"[localstack] Starting '{LOCALSTACK_CONTAINER_NAME}'  socket={socket}  "
           f"lambda_env_timeout={env_timeout}s")
+
     subprocess.run(
         [
             "docker", "run", "-d",
@@ -223,7 +234,6 @@ def stop_localstack():
 
 
 def wait_for_localstack(timeout: int = 120):
-    import urllib.request
     required = {"sqs", "secretsmanager", "dynamodb", "lambda"}
     url      = f"{LOCALSTACK_ENDPOINT}/_localstack/health"
     print(f"[localstack] Waiting for health at {url} …", end="", flush=True)
@@ -251,28 +261,30 @@ def _hmac_key_b64() -> str:
 
 
 def _rsa_keypair_b64() -> tuple[str, str]:
-    from cryptography.hazmat.primitives.asymmetric.rsa import generate_private_key
-    from cryptography.hazmat.primitives import serialization
-    priv    = generate_private_key(public_exponent=65537, key_size=2048)
+    priv    = generate_private_key_rsa(public_exponent=65537, key_size=2048)
+
     priv_b64 = base64.b64encode(priv.private_bytes(
         serialization.Encoding.DER, serialization.PrivateFormat.PKCS8,
         serialization.NoEncryption())).decode()
+
     pub_b64  = base64.b64encode(priv.public_key().public_bytes(
         serialization.Encoding.DER,
         serialization.PublicFormat.SubjectPublicKeyInfo)).decode()
+
     return priv_b64, pub_b64
 
 
 def _ec_keypair_b64() -> tuple[str, str]:
-    from cryptography.hazmat.primitives.asymmetric.ec import generate_private_key, SECP256R1
-    from cryptography.hazmat.primitives import serialization
-    priv    = generate_private_key(SECP256R1())
+    priv    = generate_private_key_ec(SECP256R1())
+
     priv_b64 = base64.b64encode(priv.private_bytes(
         serialization.Encoding.DER, serialization.PrivateFormat.PKCS8,
         serialization.NoEncryption())).decode()
+
     pub_b64  = base64.b64encode(priv.public_key().public_bytes(
         serialization.Encoding.DER,
         serialization.PublicFormat.SubjectPublicKeyInfo)).decode()
+
     return priv_b64, pub_b64
 
 # ---------------------------------------------------------------------------
@@ -296,6 +308,7 @@ def _ensure_iam_role() -> str:
             arn = iam.get_role(RoleName=LAMBDA_ROLE_NAME)["Role"]["Arn"]
         else:
             raise
+
     return arn
 
 
@@ -329,30 +342,31 @@ def provision_secrets():
     _upsert(KEY_SECRET_NAMES["RSA_PSS_SHA256"], {
         "keyId": KEY_SECRET_NAMES["RSA_PSS_SHA256"],
         "algorithm": "RSA_PSS_SHA256",
-        "keyMaterial": rsa_priv,
-    })
-    _upsert(KEY_SECRET_NAMES["RSA_PSS_SHA256"] + "/public", {
-        "keyId": KEY_SECRET_NAMES["RSA_PSS_SHA256"] + "/public",
-        "algorithm": "RSA_PSS_SHA256",
         "keyMaterial": rsa_pub,
+    })
+    _upsert(KEY_SECRET_NAMES["RSA_PSS_SHA256"] + "/private", {
+        "keyId": KEY_SECRET_NAMES["RSA_PSS_SHA256"] + "/private",
+        "algorithm": "RSA_PSS_SHA256",
+        "keyMaterial": rsa_priv,
     })
 
     ec_priv, ec_pub = _ec_keypair_b64()
     _upsert(KEY_SECRET_NAMES["ECDSA_P256_SHA256"], {
         "keyId": KEY_SECRET_NAMES["ECDSA_P256_SHA256"],
         "algorithm": "ECDSA_P256_SHA256",
-        "keyMaterial": ec_priv,
-    })
-    _upsert(KEY_SECRET_NAMES["ECDSA_P256_SHA256"] + "/public", {
-        "keyId": KEY_SECRET_NAMES["ECDSA_P256_SHA256"] + "/public",
-        "algorithm": "ECDSA_P256_SHA256",
         "keyMaterial": ec_pub,
+    })
+    _upsert(KEY_SECRET_NAMES["ECDSA_P256_SHA256"] + "/private", {
+        "keyId": KEY_SECRET_NAMES["ECDSA_P256_SHA256"] + "/private",
+        "algorithm": "ECDSA_P256_SHA256",
+        "keyMaterial": ec_priv,
     })
 
 
 def provision_sqs() -> str:
     url = _sqs().create_queue(QueueName=QUEUE_NAME)["QueueUrl"]
     print(f"[sqs]    Queue ready: {url}")
+
     return url
 
 
@@ -450,10 +464,10 @@ def _host_architecture() -> str:
     the host's architecture, so the Lambda function must be created with a
     matching Architectures value.  JVM mode is architecture-agnostic.
     """
-    import platform
     machine = platform.machine().lower()
     if machine in ("aarch64", "arm64"):
         return "arm64"
+
     return "x86_64"
 
 
@@ -546,6 +560,7 @@ def _localstack_container_ip() -> str:
             sys.exit(f"[ERROR] Could not determine IP of container '{LOCALSTACK_CONTAINER_NAME}'. "
                      f"Is it running?")
         print(f"[localstack] Container IP: {ip}")
+
         return ip
     except Exception as e:
         sys.exit(f"[ERROR] Failed to inspect LocalStack container IP: {e}")
@@ -587,6 +602,7 @@ def provision_all(cache_ttl: int) -> str:
     provision_lambda(PRODUCER_FUNCTION_NAME, PRODUCER_ZIP, role_arn, env)
     provision_lambda(CONSUMER_FUNCTION_NAME, CONSUMER_ZIP, role_arn, env)
     provision_sqs_trigger(queue_url)
+
     return queue_url
 
 # ---------------------------------------------------------------------------
@@ -717,6 +733,7 @@ def _invoke_producer(payload: dict) -> dict:
     body = resp["Payload"].read()
     if resp.get("FunctionError"):
         raise RuntimeError(f"Lambda error: {body.decode()}")
+
     return json.loads(body)
 
 

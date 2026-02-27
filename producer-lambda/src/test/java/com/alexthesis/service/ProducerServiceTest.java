@@ -88,13 +88,37 @@ class ProducerServiceTest {
     }
 
     @Test
-    void processEvent_fetchesSecretUsingKeyIdFromContent() {
+    void processEvent_hmac_fetchesSecretUsingOriginalKeyId() {
         SignedEvent input = buildEvent("evt-1", Algorithm.HMAC_SHA256, "the-key-id");
         stubCollaborators("the-key-id", "sig");
 
         producerService.processEvent(input);
 
         verify(secretService).getSecret("the-key-id");
+    }
+
+    @Test
+    void processEvent_rsa_fetchesPrivateKeyVariant() {
+        SignedEvent input = buildEvent("evt-1", Algorithm.RSA_PSS_SHA256, "thesis/key/rsa");
+        when(secretService.getSecret("thesis/key/rsa/private")).thenReturn(
+                new KeySecret("thesis/key/rsa/private", "RSA_PSS_SHA256", "dGVzdA=="));
+        when(signatureService.sign(any(), any())).thenReturn("sig");
+
+        producerService.processEvent(input);
+
+        verify(secretService).getSecret("thesis/key/rsa/private");
+    }
+
+    @Test
+    void processEvent_ecdsa_fetchesPrivateKeyVariant() {
+        SignedEvent input = buildEvent("evt-1", Algorithm.ECDSA_P256_SHA256, "thesis/key/ec");
+        when(secretService.getSecret("thesis/key/ec/private")).thenReturn(
+                new KeySecret("thesis/key/ec/private", "ECDSA_P256_SHA256", "dGVzdA=="));
+        when(signatureService.sign(any(), any())).thenReturn("sig");
+
+        producerService.processEvent(input);
+
+        verify(secretService).getSecret("thesis/key/ec/private");
     }
 
     @Test
