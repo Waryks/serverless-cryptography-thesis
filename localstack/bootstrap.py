@@ -28,6 +28,10 @@ QUEUE_NAMES = [
     "thesis-rejected-events",
 ]
 
+INGRESS_QUEUE_NAME = "thesis-ingress-events"
+VALIDATION_FUNCTION_NAME = "thesis-validation"
+INGRESS_MAPPING_BATCH_SIZE = 1
+
 TABLE_NAMES = [
     "thesis_ledger",
     "thesis_dedup",
@@ -151,6 +155,7 @@ def create_clients(config: Config) -> dict[str, Any]:
         "sqs": session.client("sqs", **kwargs),
         "dynamodb": session.client("dynamodb", **kwargs),
         "secretsmanager": session.client("secretsmanager", **kwargs),
+        "lambda": session.client("lambda", **kwargs),
     }
 
 
@@ -182,6 +187,62 @@ def ensure_queue(sqs_client: Any, queue_name: str) -> str:
             raise
     response = sqs_client.create_queue(QueueName=queue_name)
     return response["QueueUrl"]
+
+
+def get_queue_arn(sqs_client: Any, queue_url: str) -> str:
+    response = sqs_client.get_queue_attributes(QueueUrl=queue_url, AttributeNames=["QueueArn"])
+    return response["Attributes"]["QueueArn"]
+
+
+def _mapping_summary(mapping: dict[str, Any]) -> str:
+    uuid = mapping.get("UUID", "<unknown>")
+    enabled = mapping.get("State") == "Enabled"
+    batch_size = mapping.get("BatchSize")
+    return f"uuid={uuid}, enabled={enabled}, batchSize={batch_size}"
+
+
+def ensure_ingress_mapping(lambda_client: Any, sqs_client: Any) -> dict[str, Any]:
+    queue_url = ensure_queue(sqs_client, INGRESS_QUEUE_NAME)
+    queue_arn = get_queue_arn(sqs_client, queue_url)
+
+    try:
+        lambda_client.get_function(FunctionName=VALIDATION_FUNCTION_NAME)
+    except ClientError as error:
+        code = error.response.get("Error", {}).get("Code")
+        if code == "ResourceNotFoundException":
+            raise RuntimeError(
+                f"Required Lambda '{VALIDATION_FUNCTION_NAME}' does not exist. "
+                "Deploy it before running Story 4 wiring bootstrap."
+            ) from error
+        raise
+
+    response = lambda_client.list_event_source_mappings(
+        FunctionName=VALIDATION_FUNCTION_NAME,
+        EventSourceArn=queue_arn,
+    )
+    mappings = [m for m in response.get("EventSourceMappings", []) if m.get("State") != "Deleting"]
+
+    if mappings:
+        mapping = mappings[0]
+        uuid = mapping["UUID"]
+        needs_update = (
+            mapping.get("BatchSize") != INGRESS_MAPPING_BATCH_SIZE
+            or mapping.get("State") != "Enabled"
+        )
+        if needs_update:
+            mapping = lambda_client.update_event_source_mapping(
+                UUID=uuid,
+                BatchSize=INGRESS_MAPPING_BATCH_SIZE,
+                Enabled=True,
+            )
+        return mapping
+
+    return lambda_client.create_event_source_mapping(
+        FunctionName=VALIDATION_FUNCTION_NAME,
+        EventSourceArn=queue_arn,
+        BatchSize=INGRESS_MAPPING_BATCH_SIZE,
+        Enabled=True,
+    )
 
 
 def ensure_table(dynamodb_client: Any, table_name: str) -> None:
@@ -229,6 +290,10 @@ def bootstrap_resources(config: Config, clients: dict[str, Any]) -> None:
     for secret_name, payload in generate_secrets_payloads().items():
         upsert_secret(clients["secretsmanager"], secret_name, payload)
         print(f"  - {secret_name}: upserted")
+
+    print("- Ensuring ingress SQS -> validation Lambda wiring")
+    mapping = ensure_ingress_mapping(clients["lambda"], clients["sqs"])
+    print(f"  - {INGRESS_QUEUE_NAME} -> {VALIDATION_FUNCTION_NAME}: {_mapping_summary(mapping)}")
 
 
 def main() -> int:

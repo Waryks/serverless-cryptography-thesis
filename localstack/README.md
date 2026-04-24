@@ -1,6 +1,6 @@
-# LocalStack Story 1 Environment
+# LocalStack Story 1-4 Environment
 
-This folder contains the local infrastructure bootstrap for Story 1.
+This folder contains the local infrastructure bootstrap for Stories 1-4.
 
 ## Defaults
 
@@ -11,9 +11,9 @@ This folder contains the local infrastructure bootstrap for Story 1.
 
 ## Scripts
 
-- `bootstrap.py`: idempotently creates required SQS, DynamoDB, and Secrets Manager resources.
+- `bootstrap.py`: idempotently creates required SQS, DynamoDB, and Secrets Manager resources, then wires ingress SQS to validation Lambda.
 - `reset.py`: deletes required resources (if present) and recreates them.
-- `smoke_test.py`: verifies required resources exist and secret payload schema is valid.
+- `smoke_test.py`: verifies required resources exist, secret payload schema is valid, and ingress mapping is configured.
 
 ## Provisioned resources (Story 1 plan contract)
 
@@ -28,6 +28,14 @@ This folder contains the local infrastructure bootstrap for Story 1.
   - `thesis/ecdsa/previous`
 
 Secret values are generated during bootstrap (no placeholder key material).
+
+## Story 4 ingress wiring
+
+- Event source mapping: `thesis-ingress-events -> thesis-validation`
+- Mapping config: `BatchSize=1`, `Enabled=true`
+- Bootstrap behavior is idempotent: it reuses existing mapping and enforces expected config.
+
+`thesis-validation` must already exist in LocalStack before running `bootstrap.py`.
 
 ## Quick start
 
