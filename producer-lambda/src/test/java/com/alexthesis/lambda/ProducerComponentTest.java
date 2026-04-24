@@ -16,6 +16,7 @@ import software.amazon.awssdk.services.secretsmanager.SecretsManagerClient;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueRequest;
 import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueResponse;
 import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.sqs.model.GetQueueUrlResponse;
 import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
 import software.amazon.awssdk.services.sqs.model.SendMessageResponse;
 
@@ -43,6 +44,7 @@ import static org.mockito.Mockito.*;
 class ProducerComponentTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final String QUEUE_URL = "http://localhost:4566/000000000000/thesis-ingress-events";
 
     @Inject
     ProducerHandler producerHandler;
@@ -60,6 +62,8 @@ class ProducerComponentTest {
     @SuppressWarnings("unchecked")
     void stubSqs() {
         capturedRequest.set(null);
+        when(sqsClient.getQueueUrl(any(java.util.function.Consumer.class)))
+                .thenReturn(GetQueueUrlResponse.builder().queueUrl(QUEUE_URL).build());
         doAnswer(inv -> {
             Consumer<SendMessageRequest.Builder> consumer = inv.getArgument(0);
             SendMessageRequest.Builder builder = SendMessageRequest.builder();
@@ -119,6 +123,7 @@ class ProducerComponentTest {
     private void verifySqsCalledWithNonBlankSignature() throws Exception {
         SendMessageRequest request = capturedRequest.get();
         assertThat(request).isNotNull();
+        assertThat(request.queueUrl()).isEqualTo(QUEUE_URL);
         SignedEvent published = MAPPER.readValue(request.messageBody(), SignedEvent.class);
         assertThat(published.signatureB64()).isNotBlank();
     }

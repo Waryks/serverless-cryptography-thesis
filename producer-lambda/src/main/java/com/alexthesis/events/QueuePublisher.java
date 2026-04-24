@@ -10,7 +10,7 @@ import software.amazon.awssdk.services.sqs.SqsClient;
 /**
  * SQS-backed implementation of {@link EventPublisher}.
  * Serialises a {@link SignedEvent} to JSON and sends it to the configured SQS queue.
- * The queue URL is bound from {@code thesis.sqs.queue-name} in {@code application.properties}.
+ * The queue name is bound from {@code thesis.sqs.queue-name} in {@code application.properties}.
  */
 @ApplicationScoped
 public class QueuePublisher implements EventPublisher {
@@ -19,13 +19,14 @@ public class QueuePublisher implements EventPublisher {
 
     private final SqsClient sqsClient;
     private final ObjectMapper objectMapper;
-    private final String queueUrl;
+    private final String queueName;
+    private volatile String queueUrl;
 
     public QueuePublisher(SqsClient sqsClient, ObjectMapper objectMapper,
-                          @ConfigProperty(name = "thesis.sqs.queue-name") String queueUrl) {
+                          @ConfigProperty(name = "thesis.sqs.queue-name") String queueName) {
         this.sqsClient = sqsClient;
         this.objectMapper = objectMapper;
-        this.queueUrl = queueUrl;
+        this.queueName = queueName;
     }
 
     /**
@@ -38,9 +39,10 @@ public class QueuePublisher implements EventPublisher {
     public void publish(SignedEvent event) {
         try {
             String message = objectMapper.writeValueAsString(event);
+            String resolvedQueueUrl = resolveQueueUrl();
 
             var response = sqsClient.sendMessage(m -> m
-                    .queueUrl(queueUrl)
+                    .queueUrl(resolvedQueueUrl)
                     .messageBody(message));
 
             log.infof("Published eventId=%s messageId=%s",
@@ -48,6 +50,20 @@ public class QueuePublisher implements EventPublisher {
             log.debugf("Full message body: %s", message);
         } catch (Exception e) {
             throw new RuntimeException("Failed to publish event to SQS", e);
+        }
+    }
+
+    private String resolveQueueUrl() {
+        String cached = queueUrl;
+        if (cached != null) {
+            return cached;
+        }
+        synchronized (this) {
+            if (queueUrl == null) {
+                queueUrl = sqsClient.getQueueUrl(r -> r.queueName(queueName)).queueUrl();
+                log.debugf("Resolved queue '%s' to URL '%s'", queueName, queueUrl);
+            }
+            return queueUrl;
         }
     }
 }

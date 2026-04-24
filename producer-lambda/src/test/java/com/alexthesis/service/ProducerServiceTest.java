@@ -98,27 +98,27 @@ class ProducerServiceTest {
     }
 
     @Test
-    void processEvent_rsa_fetchesPrivateKeyVariant() {
+    void processEvent_rsa_fetchesSecretUsingOriginalKeyId() {
         SignedEvent input = buildEvent("evt-1", Algorithm.RSA_PSS_SHA256, "thesis/key/rsa");
-        when(secretService.getSecret("thesis/key/rsa/private")).thenReturn(
-                new KeySecret("thesis/key/rsa/private", "RSA_PSS_SHA256", "dGVzdA=="));
+        when(secretService.getSecret("thesis/key/rsa")).thenReturn(
+                new KeySecret("thesis/key/rsa", "RSA_PSS_SHA256", "dGVzdA=="));
         when(signatureService.sign(any(), any())).thenReturn("sig");
 
         producerService.processEvent(input);
 
-        verify(secretService).getSecret("thesis/key/rsa/private");
+        verify(secretService).getSecret("thesis/key/rsa");
     }
 
     @Test
-    void processEvent_ecdsa_fetchesPrivateKeyVariant() {
+    void processEvent_ecdsa_fetchesSecretUsingOriginalKeyId() {
         SignedEvent input = buildEvent("evt-1", Algorithm.ECDSA_P256_SHA256, "thesis/key/ec");
-        when(secretService.getSecret("thesis/key/ec/private")).thenReturn(
-                new KeySecret("thesis/key/ec/private", "ECDSA_P256_SHA256", "dGVzdA=="));
+        when(secretService.getSecret("thesis/key/ec")).thenReturn(
+                new KeySecret("thesis/key/ec", "ECDSA_P256_SHA256", "dGVzdA=="));
         when(signatureService.sign(any(), any())).thenReturn("sig");
 
         producerService.processEvent(input);
 
-        verify(secretService).getSecret("thesis/key/ec/private");
+        verify(secretService).getSecret("thesis/key/ec");
     }
 
     @Test

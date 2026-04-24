@@ -67,21 +67,9 @@ public class ProducerService {
     }
 
     private String handleSigningContent(SignedContent content) {
-        String signingKeyId = resolveSigningKeyId(content);
-        KeySecret secret = secretService.getSecret(signingKeyId);
+        KeySecret secret = secretService.getSecret(content.keyId());
 
         return signatureService.sign(content, secret);
-    }
-
-    /**
-     * Resolves the Secrets Manager secret name that holds the <b>signing</b> key.
-     */
-    private static String resolveSigningKeyId(SignedContent content) {
-        return switch (content.algorithm()) {
-            case HMAC_SHA256       -> content.keyId();
-            case RSA_PSS_SHA256,
-                 ECDSA_P256_SHA256 -> content.keyId() + "/private";
-        };
     }
 }
 
