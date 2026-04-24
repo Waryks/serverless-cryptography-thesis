@@ -180,6 +180,29 @@ It explains:
 
 # Build Instructions
 
+## LocalStack Environment (Story 1)
+
+Start LocalStack and provision required baseline resources:
+
+``` bash
+docker compose up -d
+python3 -m pip install -r localstack/requirements.txt
+python3 localstack/bootstrap.py
+python3 localstack/smoke_test.py
+```
+
+Reset the baseline state:
+
+``` bash
+python3 localstack/reset.py
+```
+
+Detailed local setup notes are in:
+
+    localstack/README.md
+
+------------------------------------------------------------------------
+
 ## JVM Mode
 
 ``` bash
