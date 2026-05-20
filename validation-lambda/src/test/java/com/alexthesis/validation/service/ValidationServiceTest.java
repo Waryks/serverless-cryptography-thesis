@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
@@ -58,11 +59,12 @@ public class ValidationServiceTest {
     @Mock
     PolicyEngine policyEngine;
 
+    private AutoCloseable mocks;
     private ValidationService validationService;
 
     @BeforeEach
     public void setup() {
-        MockitoAnnotations.openMocks(this);
+        mocks = MockitoAnnotations.openMocks(this);
         validationService = new ValidationService(
                 objectMapper,
                 secretService,
@@ -74,13 +76,20 @@ public class ValidationServiceTest {
         );
     }
 
+    @AfterEach
+    void tearDown() throws Exception {
+        if (mocks != null) {
+            mocks.close();
+        }
+    }
+
     @Test
     public void testProcessMessage_ValidEvent_RoutesAccepted() {
         // Arrange
         SignedEvent event = createValidSignedEvent();
         String messageBody = serializeEvent(event);
 
-        SecurityPolicy policy = policy(Algorithm.HMAC_SHA256, true, true, false, true);
+        SecurityPolicy policy = policy(true, true, false, true);
         KeySecret secret = new KeySecret("key1", "HMAC_SHA256", "secret-key-material");
         when(secretService.getSecret("key1")).thenReturn(secret);
         when(policyEngine.evaluate(any())).thenReturn(PolicyValidationResult.allowed(policy));
@@ -97,12 +106,31 @@ public class ValidationServiceTest {
     }
 
     @Test
+    public void testProcessMessage_AcceptedRouteFailure_Throws() {
+        SignedEvent event = createValidSignedEvent();
+        String messageBody = serializeEvent(event);
+
+        SecurityPolicy policy = policy(true, true, false, true);
+        when(secretService.getSecret("key1")).thenReturn(new KeySecret("key1", "HMAC_SHA256", "secret-key-material"));
+        when(policyEngine.evaluate(any())).thenReturn(PolicyValidationResult.allowed(policy));
+        when(signatureVerifier.verifySignature(any(), any(), any())).thenReturn(true);
+        when(replayChecker.isWithinReplayWindow(any(), anyLong())).thenReturn(true);
+        when(dedupStore.isNewEvent(any())).thenReturn(true);
+        doThrow(new RuntimeException("Accepted queue unavailable")).when(router).routeAccepted(any(SignedEvent.class));
+
+        RuntimeException exception = assertThrows(RuntimeException.class, () -> validationService.processMessage(messageBody));
+
+        assertTrue(exception.getMessage().contains("Infrastructure failure during validation"));
+        verify(router, never()).routeRejected(any(), any(), any());
+    }
+
+    @Test
     public void testProcessMessage_InvalidSignature_RoutesRejected() {
         // Arrange
         SignedEvent event = createValidSignedEvent();
         String messageBody = serializeEvent(event);
 
-        SecurityPolicy policy = policy(Algorithm.HMAC_SHA256, true, true, false, true);
+        SecurityPolicy policy = policy(true, true, false, true);
         KeySecret secret = new KeySecret("key1", "HMAC_SHA256", "secret-key-material");
         when(secretService.getSecret("key1")).thenReturn(secret);
         when(policyEngine.evaluate(any())).thenReturn(PolicyValidationResult.allowed(policy));
@@ -117,12 +145,29 @@ public class ValidationServiceTest {
     }
 
     @Test
+    public void testProcessMessage_RejectedRouteFailure_Throws() {
+        SignedEvent event = createValidSignedEvent();
+        String messageBody = serializeEvent(event);
+
+        SecurityPolicy policy = policy(true, true, false, true);
+        when(secretService.getSecret("key1")).thenReturn(new KeySecret("key1", "HMAC_SHA256", "secret-key-material"));
+        when(policyEngine.evaluate(any())).thenReturn(PolicyValidationResult.allowed(policy));
+        when(signatureVerifier.verifySignature(any(), any(), any())).thenReturn(false);
+        doThrow(new RuntimeException("Rejected queue unavailable")).when(router).routeRejected(any(), any(), any());
+
+        RuntimeException exception = assertThrows(RuntimeException.class, () -> validationService.processMessage(messageBody));
+
+        assertTrue(exception.getMessage().contains("Infrastructure failure during validation"));
+        verify(router, never()).routeAccepted(any());
+    }
+
+    @Test
     public void testProcessMessage_ReplayWindow_RoutesRejected() {
         // Arrange
         SignedEvent event = createValidSignedEvent();
         String messageBody = serializeEvent(event);
 
-        SecurityPolicy policy = policy(Algorithm.HMAC_SHA256, true, true, false, true);
+        SecurityPolicy policy = policy(true, true, false, true);
         KeySecret secret = new KeySecret("key1", "HMAC_SHA256", "secret-key-material");
         when(secretService.getSecret("key1")).thenReturn(secret);
         when(policyEngine.evaluate(any())).thenReturn(PolicyValidationResult.allowed(policy));
@@ -143,7 +188,7 @@ public class ValidationServiceTest {
         SignedEvent event = createValidSignedEvent();
         String messageBody = serializeEvent(event);
 
-        SecurityPolicy policy = policy(Algorithm.HMAC_SHA256, true, true, false, true);
+        SecurityPolicy policy = policy(true, true, false, true);
         KeySecret secret = new KeySecret("key1", "HMAC_SHA256", "secret-key-material");
         when(secretService.getSecret("key1")).thenReturn(secret);
         when(policyEngine.evaluate(any())).thenReturn(PolicyValidationResult.allowed(policy));
@@ -165,7 +210,7 @@ public class ValidationServiceTest {
         SignedEvent event = createValidSignedEvent();
         String messageBody = serializeEvent(event);
 
-        SecurityPolicy policy = policy(Algorithm.HMAC_SHA256, true, true, false, true);
+        SecurityPolicy policy = policy(true, true, false, true);
         when(policyEngine.evaluate(any())).thenReturn(PolicyValidationResult.allowed(policy));
         when(secretService.getSecret(any())).thenThrow(new RuntimeException("Secrets Manager unavailable"));
 
@@ -176,14 +221,14 @@ public class ValidationServiceTest {
     }
 
     @Test
-    public void testProcessMessage_InvalidJson_ThrowsOrRoutsRejected() {
+    public void testProcessMessage_InvalidJson_RoutesRejected() {
         // Arrange
         String invalidJson = "{invalid json}";
 
         // Act & Assert
-        // Invalid JSON causes a deserialization exception which is routed to rejected queue
-        // No exception is thrown to the caller (security rejection, not infrastructure failure)
+        // Invalid JSON is treated as a rejected message and routed without throwing.
         assertDoesNotThrow(() -> validationService.processMessage(invalidJson));
+        verify(router, times(1)).routeRejected(isNull(), eq(AuditReason.DESERIALIZATION_ERROR), any());
     }
 
     @Test
@@ -191,7 +236,7 @@ public class ValidationServiceTest {
         SignedEvent event = createValidSignedEvent();
         String messageBody = serializeEvent(event);
 
-        SecurityPolicy policy = policy(Algorithm.HMAC_SHA256, false, false, true, false);
+        SecurityPolicy policy = policy(false, false, true, false);
         when(policyEngine.evaluate(any())).thenReturn(PolicyValidationResult.allowed(policy));
         when(secretService.getSecret("key1")).thenReturn(new KeySecret("key1", "HMAC_SHA256", "secret-key-material"));
         when(signatureVerifier.verifySignature(any(), any(), any())).thenReturn(true);
@@ -208,7 +253,7 @@ public class ValidationServiceTest {
         SignedEvent event = createValidSignedEvent();
         String messageBody = serializeEvent(event);
 
-        SecurityPolicy policy = policy(Algorithm.HMAC_SHA256, true, true, true, true);
+        SecurityPolicy policy = policy(true, true, true, true);
         when(policyEngine.evaluate(any())).thenReturn(PolicyValidationResult.allowed(policy));
         when(policyEngine.resolvePreviousKeyId("key1")).thenReturn("key1-previous");
 
@@ -227,14 +272,13 @@ public class ValidationServiceTest {
         verify(router, never()).routeRejected(any(), any(), any());
     }
 
-    private SecurityPolicy policy(Algorithm algorithm,
-                                  boolean replayEnabled,
+    private SecurityPolicy policy(boolean replayEnabled,
                                   boolean dedupEnabled,
                                   boolean allowPreviousKey,
                                   boolean strictValidation) {
         return new SecurityPolicy(
                 "test-policy",
-                algorithm,
+                Algorithm.HMAC_SHA256,
                 replayEnabled,
                 300_000L,
                 dedupEnabled,

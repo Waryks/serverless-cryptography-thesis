@@ -2,6 +2,8 @@ package com.alexthesis.validation.handler;
 
 import com.alexthesis.crypto.helpers.KeySecret;
 import com.alexthesis.messaging.Algorithm;
+import com.alexthesis.messaging.AuditReason;
+import com.alexthesis.messaging.RejectedEvent;
 import com.alexthesis.messaging.SignedContent;
 import com.alexthesis.messaging.SignedEvent;
 import com.amazonaws.services.lambda.runtime.Context;
@@ -17,12 +19,8 @@ import org.jboss.logging.Logger;
  * <p>Receives SQS batch events from the ingress queue and delegates processing to
  * {@link com.alexthesis.validation.service.ValidationService}.
  *
- * <p>Uses the SQS partial batch response pattern: each message is processed independently.
- * Only messages that fail with infrastructure errors are returned as failures for SQS redelivery.
- * Security rejections are handled gracefully and do NOT cause redelivery.
- *
- * <p>Requires the SQS event source mapping to have
- * {@code FunctionResponseTypes = [ReportBatchItemFailures]} enabled.
+ * <p>Security rejections are handled inside the service and do NOT throw.
+ * Infrastructure failures are allowed to escape so SQS can retry the batch.
  *
  * <p>The {@link RegisterForReflection} annotation registers commons record types
  * for GraalVM native-image reflection so that Jackson can deserialize them at runtime.
@@ -32,6 +30,8 @@ import org.jboss.logging.Logger;
         SignedEvent.class,
         SignedContent.class,
         Algorithm.class,
+        RejectedEvent.class,
+        AuditReason.class,
 })
 public class ValidationHandler implements RequestHandler<SQSEvent, Void> {
 
@@ -48,7 +48,8 @@ public class ValidationHandler implements RequestHandler<SQSEvent, Void> {
      * Lambda invocation entry point.
      *
      * <p>Iterates over each SQS record and delegates to the validation service.
-     * Returns {@code Void} but internally handles batch item failures.
+     * Security rejections are handled by the service; infrastructure failures are
+     * rethrown so the Lambda invocation fails and SQS retries the batch.
      *
      * @param event   the SQS batch event
      * @param context the Lambda runtime context
@@ -60,17 +61,9 @@ public class ValidationHandler implements RequestHandler<SQSEvent, Void> {
         log.debugf("Validation Lambda received SQS batch with %d message(s)", event.getRecords().size());
 
         for (SQSEvent.SQSMessage message : event.getRecords()) {
-            try {
-                validationService.processMessage(message.getBody());
-                log.debugf("Successfully processed message %s", message.getMessageId());
-            } catch (Exception e) {
-                log.errorf(e, "Infrastructure failure processing message %s — will be retried",
-                        message.getMessageId());
-            }
+            validationService.processMessage(message.getBody());
+            log.debugf("Successfully processed message %s", message.getMessageId());
         }
-
-        // TODO: Use SQS batch response when ready to integrate with batch failure reporting
-        // For now, we silently handle infrastructure failures as they will cause Lambda to retry
 
         return null;
     }

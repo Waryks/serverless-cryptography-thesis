@@ -13,8 +13,8 @@ import software.amazon.awssdk.services.sqs.model.GetQueueUrlRequest;
 import software.amazon.awssdk.services.sqs.model.GetQueueUrlResponse;
 import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
 
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Routes validation decisions to the appropriate SQS queues.
@@ -33,7 +33,7 @@ public class ValidationRouter {
     private final ObjectMapper objectMapper;
     private final String acceptedQueueName;
     private final String rejectedQueueName;
-    private final Map<String, String> queueUrlCache = new HashMap<>();
+    private final Map<String, String> queueUrlCache = new ConcurrentHashMap<>();
 
     @Inject
     public ValidationRouter(

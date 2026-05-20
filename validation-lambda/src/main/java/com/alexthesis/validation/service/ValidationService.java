@@ -82,67 +82,71 @@ public class ValidationService {
      */
     public void processMessage(String messageBodyJson) {
         try {
-            SignedEvent event = deserializeEvent(messageBodyJson);
-            if (event == null || event.content() == null) {
-                routeRejected(null, AuditReason.DESERIALIZATION_ERROR, "Failed to deserialize event");
-                return;
+            ValidationDecision decision = decide(messageBodyJson);
+
+            if (decision instanceof ValidationDecision.Accepted accepted) {
+                router.routeAccepted(accepted.event());
+                log.infof("Successfully validated and routed event %s", accepted.event().content().eventId());
+            } else if (decision instanceof ValidationDecision.Rejected rejected) {
+                routeRejected(rejected.originalEvent(), rejected.reason(), rejected.message());
             }
-
-            SignedContent content = event.content();
-
-            String structureError = validateStructure(content, event.signatureB64());
-            if (structureError != null) {
-                routeRejected(event, AuditReason.DESERIALIZATION_ERROR, structureError);
-                return;
-            }
-
-            PolicyValidationResult policyResult = policyEngine.evaluate(content);
-            if (!policyResult.allowed()) {
-                routeRejected(event, policyResult.rejectionReason(), policyResult.rejectionMessage());
-                return;
-            }
-
-            SecurityPolicy policy = policyResult.policy();
-
-            KeySecret secret = secretService.getSecret(content.keyId());
-
-            boolean signatureValid = signatureVerifier.verifySignature(content, event.signatureB64(), secret);
-            if (!signatureValid && policy.allowPreviousKey()) {
-                String previousKeyId = policyEngine.resolvePreviousKeyId(content.keyId());
-                if (!previousKeyId.equals(content.keyId())) {
-                    KeySecret previousSecret = secretService.getSecret(previousKeyId);
-                    signatureValid = signatureVerifier.verifySignature(content, event.signatureB64(), previousSecret);
-                }
-            }
-
-            if (!signatureValid) {
-                routeRejected(
-                        event,
-                        policy.allowPreviousKey() ? AuditReason.UNKNOWN_KEY : AuditReason.INVALID_SIGNATURE,
-                        policy.allowPreviousKey()
-                                ? "Signature verification failed with current and previous key"
-                                : "Signature verification failed"
-                );
-                return;
-            }
-
-            if (policy.replayCheckEnabled() && !replayChecker.isWithinReplayWindow(content, policy.replayWindowMs())) {
-                routeRejected(event, AuditReason.EXPIRED, "Event outside replay window");
-                return;
-            }
-
-            if (policy.dedupEnabled() && !dedupStore.isNewEvent(content)) {
-                routeRejected(event, AuditReason.REPLAY_DETECTED, "Duplicate event detected");
-                return;
-            }
-
-            router.routeAccepted(event);
-            log.infof("Successfully validated and routed event %s", content.eventId());
         } catch (Exception e) {
             // Infrastructure failure: let it propagate so SQS will retry
             log.errorf(e, "Infrastructure failure processing message");
             throw new RuntimeException("Infrastructure failure during validation", e);
         }
+    }
+
+    private ValidationDecision decide(String messageBodyJson) {
+        SignedEvent event = deserializeEvent(messageBodyJson);
+        if (event == null || event.content() == null) {
+            return ValidationDecision.rejected(null, AuditReason.DESERIALIZATION_ERROR, "Failed to deserialize event");
+        }
+
+        SignedContent content = event.content();
+
+        String structureError = validateStructure(content, event.signatureB64());
+        if (structureError != null) {
+            return ValidationDecision.rejected(event, AuditReason.DESERIALIZATION_ERROR, structureError);
+        }
+
+        PolicyValidationResult policyResult = policyEngine.evaluate(content);
+        if (!policyResult.allowed()) {
+            return ValidationDecision.rejected(event, policyResult.rejectionReason(), policyResult.rejectionMessage());
+        }
+
+        SecurityPolicy policy = policyResult.policy();
+
+        KeySecret secret = secretService.getSecret(content.keyId());
+
+        boolean signatureValid = signatureVerifier.verifySignature(content, event.signatureB64(), secret);
+        if (!signatureValid && policy.allowPreviousKey()) {
+            String previousKeyId = policyEngine.resolvePreviousKeyId(content.keyId());
+            if (!previousKeyId.equals(content.keyId())) {
+                KeySecret previousSecret = secretService.getSecret(previousKeyId);
+                signatureValid = signatureVerifier.verifySignature(content, event.signatureB64(), previousSecret);
+            }
+        }
+
+        if (!signatureValid) {
+            return ValidationDecision.rejected(
+                    event,
+                    policy.allowPreviousKey() ? AuditReason.UNKNOWN_KEY : AuditReason.INVALID_SIGNATURE,
+                    policy.allowPreviousKey()
+                            ? "Signature verification failed with current and previous key"
+                            : "Signature verification failed"
+            );
+        }
+
+        if (policy.replayCheckEnabled() && !replayChecker.isWithinReplayWindow(content, policy.replayWindowMs())) {
+            return ValidationDecision.rejected(event, AuditReason.EXPIRED, "Event outside replay window");
+        }
+
+        if (policy.dedupEnabled() && !dedupStore.isNewEvent(content)) {
+            return ValidationDecision.rejected(event, AuditReason.REPLAY_DETECTED, "Duplicate event detected");
+        }
+
+        return ValidationDecision.accepted(event);
     }
 
     /**
@@ -192,20 +196,13 @@ public class ValidationService {
 
     /**
      * Routes a rejection decision to the rejected queue.
-     * Catches any exceptions to avoid propagating routing failures.
      *
      * @param event the original SignedEvent
      * @param reason the reason for rejection
      * @param message descriptive message
      */
     private void routeRejected(SignedEvent event, AuditReason reason, String message) {
-        try {
-            router.routeRejected(event, reason, message);
-        } catch (Exception e) {
-            // Log but do not throw: we've already made the security decision
-            log.errorf(e, "Failed to route rejected event to rejected queue (reason=%s)", reason);
-            // Note: In production, we might want to write to a dead letter queue or retry
-        }
+        router.routeRejected(event, reason, message);
     }
 
 }
