@@ -12,6 +12,7 @@
         <module>consumer-lambda</module>
         <module>producer-lambda</module>
         <module>persistence-lambda</module>
+        <module>audit-lambda</module>
         <module>validation-lambda</module>
     </modules>
 
