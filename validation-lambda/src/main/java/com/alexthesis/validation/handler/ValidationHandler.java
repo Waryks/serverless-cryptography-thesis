@@ -11,9 +11,6 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
-import java.util.ArrayList;
-import java.util.List;
-
 /**
  * AWS Lambda entry point for the validation stage.
  *
@@ -60,21 +57,15 @@ public class ValidationHandler implements RequestHandler<SQSEvent, Void> {
      */
     @Override
     public Void handleRequest(SQSEvent event, Context context) {
-        List<String> failures = new ArrayList<>();
-
         log.debugf("Validation Lambda received SQS batch with %d message(s)", event.getRecords().size());
 
         for (SQSEvent.SQSMessage message : event.getRecords()) {
             try {
                 validationService.processMessage(message.getBody());
                 log.debugf("Successfully processed message %s", message.getMessageId());
-            } catch (com.alexthesis.validation.service.ValidationService.SecurityRejectionException e) {
-                log.warnf("Security rejection for message %s: %s",
-                        message.getMessageId(), e.getReason());
             } catch (Exception e) {
                 log.errorf(e, "Infrastructure failure processing message %s — will be retried",
                         message.getMessageId());
-                failures.add(message.getMessageId());
             }
         }
 

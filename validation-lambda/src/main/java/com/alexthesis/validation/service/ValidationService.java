@@ -9,6 +9,9 @@ import com.alexthesis.validation.checks.ReplayChecker;
 import com.alexthesis.validation.crypto.SignatureVerifier;
 import com.alexthesis.validation.crypto.SecretService;
 import com.alexthesis.validation.routing.ValidationRouter;
+import com.alexthesis.validation.policy.PolicyEngine;
+import com.alexthesis.validation.policy.PolicyValidationResult;
+import com.alexthesis.validation.policy.SecurityPolicy;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -38,6 +41,7 @@ public class ValidationService {
     private final ReplayChecker replayChecker;
     private final DedupStore dedupStore;
     private final ValidationRouter router;
+    private final PolicyEngine policyEngine;
 
     @Inject
     public ValidationService(
@@ -46,13 +50,15 @@ public class ValidationService {
             SignatureVerifier signatureVerifier,
             ReplayChecker replayChecker,
             DedupStore dedupStore,
-            ValidationRouter router) {
+            ValidationRouter router,
+            PolicyEngine policyEngine) {
         this.objectMapper = objectMapper;
         this.secretService = secretService;
         this.signatureVerifier = signatureVerifier;
         this.replayChecker = replayChecker;
         this.dedupStore = dedupStore;
         this.router = router;
+        this.policyEngine = policyEngine;
     }
 
     /**
@@ -76,41 +82,62 @@ public class ValidationService {
      */
     public void processMessage(String messageBodyJson) {
         try {
-            // Step 1: Deserialize event
             SignedEvent event = deserializeEvent(messageBodyJson);
-            SignedContent content = event.content();
-
-            // Step 2: Validate basic structure
-            validateStructure(content);
-
-            // Step 3: Load key (may throw infrastructure exception)
-            KeySecret secret = secretService.getSecret(content.keyId());
-
-            // Step 4: Verify signature
-            if (!signatureVerifier.verifySignature(content, event.signatureB64(), secret)) {
-                routeRejected(event, AuditReason.INVALID_SIGNATURE, "Signature verification failed");
+            if (event == null || event.content() == null) {
+                routeRejected(null, AuditReason.DESERIALIZATION_ERROR, "Failed to deserialize event");
                 return;
             }
 
-            // Step 5: Check replay window
-            if (!replayChecker.isWithinReplayWindow(content)) {
+            SignedContent content = event.content();
+
+            String structureError = validateStructure(content, event.signatureB64());
+            if (structureError != null) {
+                routeRejected(event, AuditReason.DESERIALIZATION_ERROR, structureError);
+                return;
+            }
+
+            PolicyValidationResult policyResult = policyEngine.evaluate(content);
+            if (!policyResult.allowed()) {
+                routeRejected(event, policyResult.rejectionReason(), policyResult.rejectionMessage());
+                return;
+            }
+
+            SecurityPolicy policy = policyResult.policy();
+
+            KeySecret secret = secretService.getSecret(content.keyId());
+
+            boolean signatureValid = signatureVerifier.verifySignature(content, event.signatureB64(), secret);
+            if (!signatureValid && policy.allowPreviousKey()) {
+                String previousKeyId = policyEngine.resolvePreviousKeyId(content.keyId());
+                if (!previousKeyId.equals(content.keyId())) {
+                    KeySecret previousSecret = secretService.getSecret(previousKeyId);
+                    signatureValid = signatureVerifier.verifySignature(content, event.signatureB64(), previousSecret);
+                }
+            }
+
+            if (!signatureValid) {
+                routeRejected(
+                        event,
+                        policy.allowPreviousKey() ? AuditReason.UNKNOWN_KEY : AuditReason.INVALID_SIGNATURE,
+                        policy.allowPreviousKey()
+                                ? "Signature verification failed with current and previous key"
+                                : "Signature verification failed"
+                );
+                return;
+            }
+
+            if (policy.replayCheckEnabled() && !replayChecker.isWithinReplayWindow(content, policy.replayWindowMs())) {
                 routeRejected(event, AuditReason.EXPIRED, "Event outside replay window");
                 return;
             }
 
-            // Step 6: Check deduplication
-            if (!dedupStore.isNewEvent(content)) {
+            if (policy.dedupEnabled() && !dedupStore.isNewEvent(content)) {
                 routeRejected(event, AuditReason.REPLAY_DETECTED, "Duplicate event detected");
                 return;
             }
 
-            // Step 7: Route accepted event
             router.routeAccepted(event);
             log.infof("Successfully validated and routed event %s", content.eventId());
-
-        } catch (SecurityRejectionException e) {
-            // Security rejection already routed; no further action needed
-            log.warnf("Security rejection: %s", e.getReason());
         } catch (Exception e) {
             // Infrastructure failure: let it propagate so SQS will retry
             log.errorf(e, "Infrastructure failure processing message");
@@ -126,17 +153,13 @@ public class ValidationService {
      *
      * @param messageBodyJson raw SQS message body
      * @return the deserialized SignedEvent
-     * @throws SecurityRejectionException if deserialization fails
      */
     private SignedEvent deserializeEvent(String messageBodyJson) {
         try {
             return objectMapper.readValue(messageBodyJson, SignedEvent.class);
         } catch (Exception e) {
             log.warnf(e, "Failed to deserialize SQS message");
-            throw new SecurityRejectionException(
-                    AuditReason.DESERIALIZATION_ERROR,
-                    "Failed to deserialize event: " + e.getMessage()
-            );
+            return null;
         }
     }
 
@@ -144,33 +167,27 @@ public class ValidationService {
      * Validates that the event has all required fields.
      *
      * @param content the SignedContent to validate
-     * @throws SecurityRejectionException if required fields are missing
+     * @param signatureB64 the Base64 signature to validate
+     * @return a rejection message if required fields are missing, otherwise {@code null}
      */
-    private void validateStructure(SignedContent content) {
+    private String validateStructure(SignedContent content, String signatureB64) {
         if (content.eventId() == null || content.eventId().isBlank()) {
-            throw new SecurityRejectionException(
-                    AuditReason.DESERIALIZATION_ERROR,
-                    "Missing or empty eventId"
-            );
+            return "Missing or empty eventId";
         }
         if (content.algorithm() == null) {
-            throw new SecurityRejectionException(
-                    AuditReason.DESERIALIZATION_ERROR,
-                    "Missing algorithm"
-            );
+            return "Missing algorithm";
         }
         if (content.keyId() == null || content.keyId().isBlank()) {
-            throw new SecurityRejectionException(
-                    AuditReason.DESERIALIZATION_ERROR,
-                    "Missing or empty keyId"
-            );
+            return "Missing or empty keyId";
         }
         if (content.payload() == null) {
-            throw new SecurityRejectionException(
-                    AuditReason.DESERIALIZATION_ERROR,
-                    "Missing payload"
-            );
+            return "Missing payload";
         }
+        if (signatureB64 == null || signatureB64.isBlank()) {
+            return "Missing signature";
+        }
+
+        return null;
     }
 
     /**
@@ -191,25 +208,6 @@ public class ValidationService {
         }
     }
 
-    /**
-     * Represents a security policy rejection during validation.
-     *
-     * <p>This exception is caught by the handler to distinguish between
-     * security rejections (which should not cause SQS retry) and infrastructure
-     * failures (which should cause SQS retry).
-     */
-    public static class SecurityRejectionException extends RuntimeException {
-        private final AuditReason reason;
-
-        public SecurityRejectionException(AuditReason reason, String message) {
-            super(message);
-            this.reason = reason;
-        }
-
-        public AuditReason getReason() {
-            return reason;
-        }
-    }
 }
 
 

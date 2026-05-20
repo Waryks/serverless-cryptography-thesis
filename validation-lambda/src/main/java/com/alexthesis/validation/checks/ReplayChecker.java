@@ -36,6 +36,17 @@ public class ReplayChecker {
      * @return {@code true} if the event is within the allowed window, {@code false} if it is considered replayed
      */
     public boolean isWithinReplayWindow(SignedContent content) {
+        return isWithinReplayWindow(content, replayWindowMs);
+    }
+
+    /**
+     * Checks whether the event is within the supplied replay window.
+     *
+     * @param content the signed content containing the timestamp
+     * @param windowMs replay window in milliseconds
+     * @return {@code true} if the event is within the allowed window, {@code false} if it is considered replayed
+     */
+    public boolean isWithinReplayWindow(SignedContent content, long windowMs) {
         if (!enabled) {
             return true; // Replay checking disabled: all events pass
         }
@@ -43,7 +54,7 @@ public class ReplayChecker {
         long now = System.currentTimeMillis();
         long age = now - content.timestampEpochMs();
 
-        return age <= replayWindowMs;
+        return age <= windowMs;
     }
 }
 
