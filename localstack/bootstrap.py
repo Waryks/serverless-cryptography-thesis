@@ -30,7 +30,10 @@ QUEUE_NAMES = [
 
 INGRESS_QUEUE_NAME = "thesis-ingress-events"
 VALIDATION_FUNCTION_NAME = "thesis-validation"
+ACCEPTED_QUEUE_NAME = "thesis-accepted-events"
+PERSISTENCE_FUNCTION_NAME = "thesis-persistence"
 INGRESS_MAPPING_BATCH_SIZE = 1
+ACCEPTED_MAPPING_BATCH_SIZE = 1
 
 TABLE_NAMES = [
     "thesis_ledger",
@@ -201,23 +204,29 @@ def _mapping_summary(mapping: dict[str, Any]) -> str:
     return f"uuid={uuid}, enabled={enabled}, batchSize={batch_size}"
 
 
-def ensure_ingress_mapping(lambda_client: Any, sqs_client: Any) -> dict[str, Any]:
-    queue_url = ensure_queue(sqs_client, INGRESS_QUEUE_NAME)
+def ensure_event_source_mapping(
+    lambda_client: Any,
+    sqs_client: Any,
+    queue_name: str,
+    function_name: str,
+    batch_size: int,
+) -> dict[str, Any]:
+    queue_url = ensure_queue(sqs_client, queue_name)
     queue_arn = get_queue_arn(sqs_client, queue_url)
 
     try:
-        lambda_client.get_function(FunctionName=VALIDATION_FUNCTION_NAME)
+        lambda_client.get_function(FunctionName=function_name)
     except ClientError as error:
         code = error.response.get("Error", {}).get("Code")
         if code == "ResourceNotFoundException":
             raise RuntimeError(
-                f"Required Lambda '{VALIDATION_FUNCTION_NAME}' does not exist. "
-                "Deploy it before running Story 4 wiring bootstrap."
+                f"Required Lambda '{function_name}' does not exist. "
+                "Deploy it before running LocalStack wiring bootstrap."
             ) from error
         raise
 
     response = lambda_client.list_event_source_mappings(
-        FunctionName=VALIDATION_FUNCTION_NAME,
+        FunctionName=function_name,
         EventSourceArn=queue_arn,
     )
     mappings = [m for m in response.get("EventSourceMappings", []) if m.get("State") != "Deleting"]
@@ -226,21 +235,21 @@ def ensure_ingress_mapping(lambda_client: Any, sqs_client: Any) -> dict[str, Any
         mapping = mappings[0]
         uuid = mapping["UUID"]
         needs_update = (
-            mapping.get("BatchSize") != INGRESS_MAPPING_BATCH_SIZE
+            mapping.get("BatchSize") != batch_size
             or mapping.get("State") != "Enabled"
         )
         if needs_update:
             mapping = lambda_client.update_event_source_mapping(
                 UUID=uuid,
-                BatchSize=INGRESS_MAPPING_BATCH_SIZE,
+                BatchSize=batch_size,
                 Enabled=True,
             )
         return mapping
 
     return lambda_client.create_event_source_mapping(
-        FunctionName=VALIDATION_FUNCTION_NAME,
+        FunctionName=function_name,
         EventSourceArn=queue_arn,
-        BatchSize=INGRESS_MAPPING_BATCH_SIZE,
+        BatchSize=batch_size,
         Enabled=True,
     )
 
@@ -292,8 +301,24 @@ def bootstrap_resources(config: Config, clients: dict[str, Any]) -> None:
         print(f"  - {secret_name}: upserted")
 
     print("- Ensuring ingress SQS -> validation Lambda wiring")
-    mapping = ensure_ingress_mapping(clients["lambda"], clients["sqs"])
+    mapping = ensure_event_source_mapping(
+        clients["lambda"],
+        clients["sqs"],
+        INGRESS_QUEUE_NAME,
+        VALIDATION_FUNCTION_NAME,
+        INGRESS_MAPPING_BATCH_SIZE,
+    )
     print(f"  - {INGRESS_QUEUE_NAME} -> {VALIDATION_FUNCTION_NAME}: {_mapping_summary(mapping)}")
+
+    print("- Ensuring accepted SQS -> persistence Lambda wiring")
+    mapping = ensure_event_source_mapping(
+        clients["lambda"],
+        clients["sqs"],
+        ACCEPTED_QUEUE_NAME,
+        PERSISTENCE_FUNCTION_NAME,
+        ACCEPTED_MAPPING_BATCH_SIZE,
+    )
+    print(f"  - {ACCEPTED_QUEUE_NAME} -> {PERSISTENCE_FUNCTION_NAME}: {_mapping_summary(mapping)}")
 
 
 def main() -> int:
