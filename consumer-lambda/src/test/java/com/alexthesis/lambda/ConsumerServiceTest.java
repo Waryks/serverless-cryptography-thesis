@@ -22,8 +22,7 @@ import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsResponse
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -61,7 +60,7 @@ class ConsumerServiceTest {
     void processMessage_validSignature_doesNotThrow() throws Exception {
         String body = buildMessageBody("evt-1", Algorithm.HMAC_SHA256, "key-1", System.currentTimeMillis());
         when(secretService.getSecret("key-1")).thenReturn(DUMMY_SECRET);
-        when(verificationService.verifySignature(any(), any(), any())).thenReturn(true);
+        when(verificationService.verifySignature(any(SignedContent.class), any(String.class), any(KeySecret.class))).thenReturn(true);
 
         assertThatCode(() -> consumerService.processMessage(body)).doesNotThrowAnyException();
     }
@@ -70,7 +69,7 @@ class ConsumerServiceTest {
     void processMessage_fetchesSecretUsingKeyIdFromContent() throws Exception {
         String body = buildMessageBody("evt-1", Algorithm.HMAC_SHA256, "the-key-id", System.currentTimeMillis());
         when(secretService.getSecret("the-key-id")).thenReturn(DUMMY_SECRET);
-        when(verificationService.verifySignature(any(), any(), any())).thenReturn(true);
+        when(verificationService.verifySignature(any(SignedContent.class), any(String.class), any(KeySecret.class))).thenReturn(true);
 
         consumerService.processMessage(body);
 
@@ -84,17 +83,17 @@ class ConsumerServiceTest {
         String body = MAPPER.writeValueAsString(event);
 
         when(secretService.getSecret("key-1")).thenReturn(DUMMY_SECRET);
-        when(verificationService.verifySignature(any(), eq("my-signature-b64"), any())).thenReturn(true);
+        when(verificationService.verifySignature(any(SignedContent.class), eq("my-signature-b64"), any(KeySecret.class))).thenReturn(true);
 
         assertThatCode(() -> consumerService.processMessage(body)).doesNotThrowAnyException();
-        verify(verificationService).verifySignature(any(), eq("my-signature-b64"), any());
+        verify(verificationService).verifySignature(any(SignedContent.class), eq("my-signature-b64"), any(KeySecret.class));
     }
 
     @Test
     void processMessage_invalidSignature_throwsInvalidSignatureException() throws Exception {
         String body = buildMessageBody("evt-1", Algorithm.HMAC_SHA256, "key-1", System.currentTimeMillis());
         when(secretService.getSecret("key-1")).thenReturn(DUMMY_SECRET);
-        when(verificationService.verifySignature(any(), any(), any())).thenReturn(false);
+        when(verificationService.verifySignature(any(SignedContent.class), any(String.class), any(KeySecret.class))).thenReturn(false);
 
         assertThatThrownBy(() -> consumerService.processMessage(body))
                 .isInstanceOf(ConsumerService.InvalidSignatureException.class)
@@ -106,7 +105,7 @@ class ConsumerServiceTest {
         long expiredTimestamp = System.currentTimeMillis() - 400_000L; // older than 300s window
         String body = buildMessageBody("evt-old", Algorithm.HMAC_SHA256, "key-1", expiredTimestamp);
         when(secretService.getSecret("key-1")).thenReturn(DUMMY_SECRET);
-        when(verificationService.verifySignature(any(), any(), any())).thenReturn(true);
+        when(verificationService.verifySignature(any(SignedContent.class), any(String.class), any(KeySecret.class))).thenReturn(true);
 
         assertThatThrownBy(() -> consumerService.processMessage(body))
                 .isInstanceOf(ConsumerService.ReplayWindowException.class);
@@ -127,7 +126,7 @@ class ConsumerServiceTest {
         long expiredTimestamp = System.currentTimeMillis() - 400_000L;
         String body = buildMessageBody("evt-old", Algorithm.HMAC_SHA256, "key-1", expiredTimestamp);
         when(secretService.getSecret("key-1")).thenReturn(DUMMY_SECRET);
-        when(verificationService.verifySignature(any(), any(), any())).thenReturn(true);
+        when(verificationService.verifySignature(any(SignedContent.class), any(String.class), any(KeySecret.class))).thenReturn(true);
 
         assertThatCode(() -> consumerService.processMessage(body)).doesNotThrowAnyException();
     }

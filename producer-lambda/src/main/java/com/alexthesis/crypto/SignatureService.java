@@ -3,11 +3,13 @@ package com.alexthesis.crypto;
 import com.alexthesis.crypto.helpers.CryptoUtils;
 import com.alexthesis.crypto.helpers.KeySecret;
 import com.alexthesis.messaging.SignedContent;
+import com.alexthesis.security.keys.ParsedKey;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.enterprise.context.ApplicationScoped;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import java.security.Key;
 import java.security.KeyFactory;
 import java.security.PrivateKey;
 import java.security.Signature;
@@ -23,6 +25,9 @@ import java.util.Base64;
  * <h2>Canonical serialisation</h2>
  * Uses {@link CryptoUtils#canonicalise(SignedContent, ObjectMapper)} to produce a
  * deterministic byte representation, keeping signing and verification in sync.
+ *
+ * <h2>Key management integration</h2>
+ * Works with both raw KeySecret objects and parsed ParsedKey objects from the key management subsystem.
  */
 @ApplicationScoped
 public class SignatureService {
@@ -47,6 +52,28 @@ public class SignatureService {
             case HMAC_SHA256 -> hmac(canonicalBytes, secret.keyMaterial());
             case RSA_PSS_SHA256 -> rsaPssSign(canonicalBytes, secret.keyMaterial());
             case ECDSA_P256_SHA256 -> asymmetricSign(canonicalBytes, secret.keyMaterial());
+        };
+
+        return Base64.getEncoder().encodeToString(rawSignature);
+    }
+
+    /**
+     * Signs the given {@link SignedContent} using a {@link ParsedKey} from the key management subsystem.
+     *
+     * <p>This method works with the new key management system which provides pre-parsed and optionally
+     * cached key objects. Prefer this method over the raw KeySecret variant for better performance
+     * in warm invocations and automatic caching support.
+     *
+     * @param content the event content to sign
+     * @param parsedKey the parsed key from the key management subsystem
+     * @return Base64-encoded signature string
+     */
+    public String sign(SignedContent content, ParsedKey parsedKey) {
+        byte[] canonicalBytes = canonicalise(content);
+        byte[] rawSignature = switch (content.algorithm()) {
+            case HMAC_SHA256 -> hmacWithParsedKey(canonicalBytes, parsedKey.key());
+            case RSA_PSS_SHA256 -> rsaPssSignWithParsedKey(canonicalBytes, (PrivateKey) parsedKey.key());
+            case ECDSA_P256_SHA256 -> asymmetricSignWithParsedKey(canonicalBytes, (PrivateKey) parsedKey.key());
         };
 
         return Base64.getEncoder().encodeToString(rawSignature);
@@ -129,6 +156,51 @@ public class SignatureService {
 
     private String stripPemHeaders(String pem) {
         return CryptoUtils.stripPemHeaders(pem);
+    }
+
+    /**
+     * Signs with a pre-parsed HMAC key (SecretKey).
+     */
+    private byte[] hmacWithParsedKey(byte[] data, Key key) {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(key);
+            return mac.doFinal(data);
+        } catch (Exception e) {
+            throw new RuntimeException("HMAC-SHA256 signing failed", e);
+        }
+    }
+
+    /**
+     * Signs with a pre-parsed RSA private key.
+     */
+    private byte[] rsaPssSignWithParsedKey(byte[] data, PrivateKey privateKey) {
+        try {
+            PSSParameterSpec pssParams = new PSSParameterSpec(
+                    "SHA-256", "MGF1", MGF1ParameterSpec.SHA256, 32, 1);
+
+            Signature signer = Signature.getInstance("RSASSA-PSS");
+            signer.setParameter(pssParams);
+            signer.initSign(privateKey);
+            signer.update(data);
+            return signer.sign();
+        } catch (Exception e) {
+            throw new RuntimeException("RSASSA-PSS signing failed", e);
+        }
+    }
+
+    /**
+     * Signs with a pre-parsed ECDSA private key.
+     */
+    private byte[] asymmetricSignWithParsedKey(byte[] data, PrivateKey privateKey) {
+        try {
+            Signature signer = Signature.getInstance("SHA256withECDSA");
+            signer.initSign(privateKey);
+            signer.update(data);
+            return signer.sign();
+        } catch (Exception e) {
+            throw new RuntimeException("SHA256withECDSA signing failed", e);
+        }
     }
 }
 

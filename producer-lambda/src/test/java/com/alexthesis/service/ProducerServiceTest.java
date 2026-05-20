@@ -20,7 +20,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
@@ -102,7 +102,7 @@ class ProducerServiceTest {
         SignedEvent input = buildEvent("evt-1", Algorithm.RSA_PSS_SHA256, "thesis/key/rsa");
         when(secretService.getSecret("thesis/key/rsa")).thenReturn(
                 new KeySecret("thesis/key/rsa", "RSA_PSS_SHA256", "dGVzdA=="));
-        when(signatureService.sign(any(), any())).thenReturn("sig");
+        when(signatureService.sign(any(SignedContent.class), any(KeySecret.class))).thenReturn("sig");
 
         producerService.processEvent(input);
 
@@ -114,7 +114,7 @@ class ProducerServiceTest {
         SignedEvent input = buildEvent("evt-1", Algorithm.ECDSA_P256_SHA256, "thesis/key/ec");
         when(secretService.getSecret("thesis/key/ec")).thenReturn(
                 new KeySecret("thesis/key/ec", "ECDSA_P256_SHA256", "dGVzdA=="));
-        when(signatureService.sign(any(), any())).thenReturn("sig");
+        when(signatureService.sign(any(SignedContent.class), any(KeySecret.class))).thenReturn("sig");
 
         producerService.processEvent(input);
 
@@ -136,7 +136,7 @@ class ProducerServiceTest {
         SignedEvent input = buildEvent("evt-1", Algorithm.HMAC_SHA256, "key-1");
         KeySecret secret = new KeySecret("key-1", "HMAC_SHA256", "dGVzdA==");
         when(secretService.getSecret("key-1")).thenReturn(secret);
-        when(signatureService.sign(any(), any())).thenThrow(new RuntimeException("Signing failed"));
+        when(signatureService.sign(any(SignedContent.class), any(KeySecret.class))).thenThrow(new RuntimeException("Signing failed"));
 
         assertThatThrownBy(() -> producerService.processEvent(input))
                 .isInstanceOf(RuntimeException.class)
@@ -153,7 +153,7 @@ class ProducerServiceTest {
     private void stubCollaborators(String keyId, String signature) {
         KeySecret secret = new KeySecret(keyId, "HMAC_SHA256", "dGVzdA==");
         when(secretService.getSecret(keyId)).thenReturn(secret);
-        when(signatureService.sign(any(), any())).thenReturn(signature);
+        when(signatureService.sign(any(SignedContent.class), any(KeySecret.class))).thenReturn(signature);
     }
 }
 
