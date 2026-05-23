@@ -56,3 +56,4 @@ __pycache__/
 
 .commands
 benchmark/venv
+.github/
