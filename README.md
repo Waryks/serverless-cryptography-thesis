@@ -122,9 +122,7 @@ This is a Maven multi-module project:
     ├── consumer-lambda/        # Legacy/compatibility consumer implementation
     ├── benchmark/              # Python benchmark & attack verification
     ├── localstack/             # LocalStack provisioning, reset, and smoke tests
-    ├── .github/application_overhaul/
-    │   ├── THESIS_PLATFORM_IMPLEMENTATION_OVERVIEW.md
-    │   └── AGENT_VERIFICATION_AND_TEST_PLAN.md
+    ├── docs/                   # Thesis scope and benchmark documentation
     └── pom.xml
 
 ------------------------------------------------------------------------
@@ -195,7 +193,7 @@ It explains:
 
 # Build Instructions
 
-## LocalStack Environment (Story 1)
+## LocalStack Environment
 
 Start LocalStack and provision required baseline resources:
 
@@ -253,12 +251,12 @@ See full details in:
 
 ------------------------------------------------------------------------
 
-# Thesis Context
+# Thesis Scope and Implementation Overview
 
 For detailed research framing, measurement model, scope definition, and
-implementation decisions, see:
+implementation overview, see:
 
-    .github/application_overhaul/THESIS_PLATFORM_IMPLEMENTATION_OVERVIEW.md
+    docs/thesis-scope.md
 
 ------------------------------------------------------------------------
 

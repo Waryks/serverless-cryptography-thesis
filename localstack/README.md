@@ -1,6 +1,6 @@
-# LocalStack Story 1-4 Environment
+# LocalStack Environment
 
-This folder contains the local infrastructure bootstrap for Stories 1-4.
+This folder contains the local infrastructure bootstrap for the serverless platform.
 
 ## Defaults
 
@@ -15,7 +15,7 @@ This folder contains the local infrastructure bootstrap for Stories 1-4.
 - `reset.py`: deletes required resources (if present) and recreates them.
 - `smoke_test.py`: verifies required resources exist, secret payload schema is valid, and ingress/persistence/audit mappings are configured.
 
-## Provisioned resources (Story 1 plan contract)
+## Provisioned resources
 
 - SQS: `thesis-ingress-events`, `thesis-accepted-events`, `thesis-rejected-events`
 - DynamoDB: `thesis_ledger`, `thesis_dedup`, `thesis_audit`
@@ -29,7 +29,7 @@ This folder contains the local infrastructure bootstrap for Stories 1-4.
 
 Secret values are generated during bootstrap (no placeholder key material).
 
-## Story 4 ingress wiring
+## Ingress wiring
 
 - Event source mapping: `thesis-ingress-events -> thesis-validation`
 - Mapping config: `BatchSize=1`, `Enabled=true`
@@ -37,7 +37,7 @@ Secret values are generated during bootstrap (no placeholder key material).
 
 `thesis-validation` must already exist in LocalStack before running `bootstrap.py`.
 
-## Story 9 persistence wiring
+## Persistence wiring
 
 - Event source mapping: `thesis-accepted-events -> thesis-persistence`
 - Mapping config: `BatchSize=1`, `Enabled=true`
@@ -45,7 +45,7 @@ Secret values are generated during bootstrap (no placeholder key material).
 
 `thesis-persistence` must already exist in LocalStack before running `bootstrap.py`.
 
-## Story 10 audit wiring
+## Audit wiring
 
 - Event source mapping: `thesis-rejected-events -> thesis-audit`
 - Mapping config: `BatchSize=1`, `Enabled=true`

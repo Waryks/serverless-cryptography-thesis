@@ -1,8 +1,8 @@
-# Benchmark Runner (Story 12)
+# Benchmark Runner
 
 Comprehensive benchmark orchestration framework for automated experiment execution, event generation, Lambda invocation, and result collection with reproducible benchmark results.
 
-**Status**: ✅ Production Ready (Story 12 Complete)
+**Status**: ✅ Production Ready
 
 Exercises the full pipeline: **Producer Lambda → Validation Lambda → Accepted/Rejected routing → Persistence/Audit Lambdas → DynamoDB**
 
@@ -14,7 +14,7 @@ Exercises the full pipeline: **Producer Lambda → Validation Lambda → Accepte
 # 1. Install dependencies
 pip install -r benchmark/requirements.txt
 
-# 2. Run the Story 14 model check
+# 2. Run the model verification check
 python3 benchmark/verify_models.py
 
 # 3. Run a benchmark experiment
@@ -63,7 +63,7 @@ pip install -r benchmark/requirements.txt
 
 ## Benchmark Runner Overview
 
-The Story 12 benchmark runner is a production-ready orchestration framework with:
+The benchmark runner is a production-ready orchestration framework with:
 
 - **18 Python modules** across 8 subsystems
 - **29 pre-configured experiments** covering all dimensions
@@ -248,15 +248,13 @@ For LocalStack provisioning, reset, and smoke tests, see `localstack/README.md`.
 
 ## Documentation
 
-Complete documentation in `.github/application_overhaul/story_no12/`:
+Implementation details are documented in `docs/benchmark.md`:
 
-- **README.md** — Navigation guide for all docs
-- **COMPLETION_SUMMARY.md** — Executive overview
-- **STORY_12_QUICK_REFERENCE.md** — Quick lookup guide
-- **STORY_12_IMPLEMENTED.md** — Technical deep dive (477 lines)
-- **FILE_MANIFEST.md** — Code reference
+- **README.md** — Main benchmark usage guide
+- **docs/benchmark.md** — Implementation overview and component summary
+- **verify_models.py** — Lightweight model verification script
 
-Start with **README.md** in the story_no12 directory.
+Start with **README.md** in the benchmark directory.
 
 ---
 
@@ -277,13 +275,12 @@ Start with **README.md** in the story_no12 directory.
 
 ---
 
-## Integration with Previous Stories
+## Integration with Replay Protection and Deduplication
 
-**Story 11**: Deduplication and Replay Protection
-- Implemented validation-lambda security mechanisms
-- Story 12 validates these mechanisms through benchmark scenarios
+The benchmark suite exercises the validation-lambda security mechanisms for
+deduplication and replay protection.
 
-**Story 12** validates:
+The benchmark scenarios validate:
 - ✅ Replay detection (duplicate eventId)
 - ✅ Dedup prevention (same eventId)
 - ✅ Expiration enforcement (outside replay window)
@@ -291,7 +288,7 @@ Start with **README.md** in the story_no12 directory.
 
 ---
 
-## All Acceptance Criteria Met ✅
+## Benchmark Capabilities ✅
 
 1. ✅ Benchmark runner exists
 2. ✅ Can invoke Producer Lambda
