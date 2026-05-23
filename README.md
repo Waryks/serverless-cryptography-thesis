@@ -36,10 +36,10 @@ Specifically, we measure:
 
 The application models a secure event pipeline using:
 
--   AWS Lambda (Producer + Consumer)
--   SQS (Event transport)
--   DynamoDB (Ledger + Deduplication)
--   AWS Secrets Manager (Key storage)
+-   AWS Lambda (Producer, Validation, Persistence, Audit)
+-   SQS (Ingress, Accepted, Rejected event transport)
+-   DynamoDB (Ledger, Deduplication, Audit persistence)
+-   AWS Secrets Manager (Key storage and rotation)
 -   LocalStack (Local reproducible AWS environment)
 
 ------------------------------------------------------------------------
@@ -55,20 +55,30 @@ The application models a secure event pipeline using:
       - Sign event
             |
             v
-    SQS (thesis-events queue)
+    SQS: thesis-ingress-events
             |
             v
-    Consumer Lambda
-      - Load key
+    Validation Lambda
+      - Load key(s)
       - Verify signature
-      - Validate timestamp window
-      - Replay protection (DynamoDB conditional write)
-      - Write event to ledger
+      - Evaluate policy
+      - Replay protection + dedup check
+      - Route accepted/rejected events
+            |
+            +------------------------------+
+            |                              |
+            v                              v
+    SQS: thesis-accepted-events      SQS: thesis-rejected-events
+            |                              |
+            v                              v
+    Persistence Lambda                Audit Lambda
+      - Persist to thesis_ledger        - Persist to thesis_audit
             |
             v
     DynamoDB
-      - thesis-dedup (TTL enabled)
-      - thesis-ledger
+      - thesis_dedup (TTL enabled)
+      - thesis_ledger
+      - thesis_audit
 
 ------------------------------------------------------------------------
 
@@ -104,12 +114,17 @@ This is a Maven multi-module project:
 
     serverless-cryptography-thesis/
     │
-    ├── commons/                # Shared models (SignedEvent, etc.)
+    ├── commons/                # Shared models, metrics, and crypto helpers
     ├── producer-lambda/        # Event signing Lambda (Quarkus)
-    ├── consumer-lambda/        # Verification + replay protection Lambda
+    ├── validation-lambda/      # Policy, replay, dedup, and routing Lambda
+    ├── persistence-lambda/     # Accepted-event persistence Lambda
+    ├── audit-lambda/           # Rejected-event audit Lambda
+    ├── consumer-lambda/        # Legacy/compatibility consumer implementation
     ├── benchmark/              # Python benchmark & attack verification
-    ├── .github/
-    │   └── overall_implementation_details.md
+    ├── localstack/             # LocalStack provisioning, reset, and smoke tests
+    ├── .github/application_overhaul/
+    │   ├── THESIS_PLATFORM_IMPLEMENTATION_OVERVIEW.md
+    │   └── AGENT_VERIFICATION_AND_TEST_PLAN.md
     └── pom.xml
 
 ------------------------------------------------------------------------
@@ -228,7 +243,8 @@ pip install -r benchmark/requirements.txt
 Run a cold start benchmark:
 
 ``` bash
-python benchmark/run_benchmark.py --algorithm HMAC_SHA256 --cold-start
+python3 benchmark/runner/benchmark_runner.py --experiment smoke_test
+python3 benchmark/test_story14.py
 ```
 
 See full details in:
@@ -242,7 +258,7 @@ See full details in:
 For detailed research framing, measurement model, scope definition, and
 implementation decisions, see:
 
-    .github/overall_implementation_details.md
+    .github/application_overhaul/THESIS_PLATFORM_IMPLEMENTATION_OVERVIEW.md
 
 ------------------------------------------------------------------------
 
@@ -252,11 +268,12 @@ This repository provides:
 
 -   A reproducible secure serverless architecture
 -   Multiple cryptographic integrity implementations
--   Replay protection enforcement
+-   Replay protection and deduplication enforcement
 -   A full benchmark harness
 -   Native vs JVM comparison
 -   Cold vs warm measurement support
--   Attack validation tooling
+-   LocalStack bootstrap, reset, and smoke-test tooling
+-   Accepted/rejected routing with persistence and audit trails
 
 It serves as the experimental platform for evaluating the **performance
 cost of cryptographic integrity mechanisms in serverless systems**.

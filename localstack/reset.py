@@ -99,6 +99,36 @@ def delete_accepted_mappings_if_exists(lambda_client: Any, sqs_client: Any) -> N
             lambda_client.delete_event_source_mapping(UUID=uuid)
 
 
+def delete_rejected_mappings_if_exists(lambda_client: Any, sqs_client: Any) -> None:
+    try:
+        queue_url = sqs_client.get_queue_url(QueueName=bootstrap.REJECTED_QUEUE_NAME)["QueueUrl"]
+        queue_arn = sqs_client.get_queue_attributes(
+            QueueUrl=queue_url,
+            AttributeNames=["QueueArn"],
+        )["Attributes"]["QueueArn"]
+    except ClientError as error:
+        code = error.response.get("Error", {}).get("Code")
+        if code == "AWS.SimpleQueueService.NonExistentQueue":
+            return
+        raise
+
+    try:
+        response = lambda_client.list_event_source_mappings(
+            FunctionName=bootstrap.AUDIT_FUNCTION_NAME,
+            EventSourceArn=queue_arn,
+        )
+    except ClientError as error:
+        code = error.response.get("Error", {}).get("Code")
+        if code == "ResourceNotFoundException":
+            return
+        raise
+
+    for mapping in response.get("EventSourceMappings", []):
+        uuid = mapping.get("UUID")
+        if uuid:
+            lambda_client.delete_event_source_mapping(UUID=uuid)
+
+
 def main() -> int:
     config = bootstrap.load_config()
     print(f"Using endpoint={config.endpoint_url}, region={config.aws_region}")
@@ -114,6 +144,10 @@ def main() -> int:
     print("- Deleting accepted mapping")
     delete_accepted_mappings_if_exists(clients["lambda"], clients["sqs"])
     print(f"  - {bootstrap.ACCEPTED_QUEUE_NAME} -> {bootstrap.PERSISTENCE_FUNCTION_NAME}: deleted or absent")
+
+    print("- Deleting rejected mapping")
+    delete_rejected_mappings_if_exists(clients["lambda"], clients["sqs"])
+    print(f"  - {bootstrap.REJECTED_QUEUE_NAME} -> {bootstrap.AUDIT_FUNCTION_NAME}: deleted or absent")
 
     print("- Deleting SQS queues")
     for queue_name in bootstrap.QUEUE_NAMES:

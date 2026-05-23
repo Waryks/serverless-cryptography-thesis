@@ -4,7 +4,7 @@ Comprehensive benchmark orchestration framework for automated experiment executi
 
 **Status**: ✅ Production Ready (Story 12 Complete)
 
-Exercises the full pipeline: **Producer Lambda → SQS → Consumer Lambda → DynamoDB**
+Exercises the full pipeline: **Producer Lambda → Validation Lambda → Accepted/Rejected routing → Persistence/Audit Lambdas → DynamoDB**
 
 ---
 
@@ -14,13 +14,16 @@ Exercises the full pipeline: **Producer Lambda → SQS → Consumer Lambda → D
 # 1. Install dependencies
 pip install -r benchmark/requirements.txt
 
-# 2. Run smoke test (quick validation)
+# 2. Run the Story 14 model check
+python3 benchmark/test_story14.py
+
+# 3. Run a benchmark experiment
 python3 benchmark/runner/benchmark_runner.py --experiment smoke_test
 
-# 3. Run full experiment suite (29 experiments)
+# 4. Run full experiment suite (29 experiments)
 python3 benchmark/runner/benchmark_runner.py
 
-# 4. View results
+# 5. View results
 cat benchmark/output/results/benchmark_results.csv
 cat benchmark/output/results/benchmark_results.json
 ```
@@ -34,7 +37,9 @@ cat benchmark/output/results/benchmark_results.json
 | Python | 3.11+ |
 | LocalStack | Running (SQS, DynamoDB, Lambda) |
 | Producer Lambda | Deployed (`thesis-producer`) |
-| Consumer Lambda | Deployed and subscribed to SQS |
+| Validation Lambda | Deployed and subscribed to the ingress queue |
+| Persistence Lambda | Deployed and subscribed to the accepted queue |
+| Audit Lambda | Deployed and subscribed to the rejected queue |
 
 ### LocalStack Setup
 
@@ -45,7 +50,7 @@ docker run -d -p 4566:4566 \
   localstack/localstack
 
 # Provision infrastructure
-python3 benchmark/run_benchmark.py --provision-only
+python3 localstack/bootstrap.py
 ```
 
 ### Install Dependencies
@@ -171,13 +176,18 @@ Structured report with aggregated metrics:
 
 ```json
 {
-  "runtime": { endpoint, region, function names, table names },
-  "metrics": {
-    "producer_latency_ms": { count, min, max, avg, p50, p95, p99 },
-    "end_to_end_latency_ms": { count, min, max, avg, p50, p95, p99 },
-    "outcomes": { total, success_rate, rejection_rate }
+  "runtime": {
+    "endpoint": "http://localhost:4566",
+    "region": "eu-central-1",
+    "function_names": ["thesis-producer", "thesis-validation", "thesis-persistence", "thesis-audit"],
+    "table_names": ["thesis_ledger", "thesis_dedup", "thesis_audit"]
   },
-  "results": [ detailed rows ]
+  "metrics": {
+    "producer_latency_ms": { "count": 0, "min": 0, "max": 0, "avg": 0, "p50": 0, "p95": 0, "p99": 0 },
+    "end_to_end_latency_ms": { "count": 0, "min": 0, "max": 0, "avg": 0, "p50": 0, "p95": 0, "p99": 0 },
+    "outcomes": { "total": 0, "success_rate": 0, "rejection_rate": 0 }
+  },
+  "results": []
 }
 ```
 
@@ -205,8 +215,8 @@ Structured report with aggregated metrics:
 
 **Collectors (Result Collection)**
 - `result_collector.py` — Outcome routing
-- `ledger_collector.py` — Poll thesis_ledger
-- `audit_collector.py` — Poll thesis_audit
+- `ledger_collector.py` — Poll `thesis_ledger`
+- `audit_collector.py` — Poll `thesis_audit`
 
 **Metrics (Statistics)**
 - `latency_metrics.py` — Aggregation
@@ -220,6 +230,8 @@ Structured report with aggregated metrics:
 ### Configuration
 
 - `config/experiment_config.yaml` — 29 pre-configured experiments
+
+For LocalStack provisioning, reset, and smoke tests, see `localstack/README.md`.
 
 ---
 

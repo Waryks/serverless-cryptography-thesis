@@ -11,9 +11,9 @@ This folder contains the local infrastructure bootstrap for Stories 1-4.
 
 ## Scripts
 
-- `bootstrap.py`: idempotently creates required SQS, DynamoDB, and Secrets Manager resources, then wires ingress SQS to validation Lambda.
+- `bootstrap.py`: idempotently creates required SQS, DynamoDB, and Secrets Manager resources, then wires ingress, accepted, and rejected SQS queues to the validation/persistence/audit Lambdas.
 - `reset.py`: deletes required resources (if present) and recreates them.
-- `smoke_test.py`: verifies required resources exist, secret payload schema is valid, and ingress/persistence mappings are configured.
+- `smoke_test.py`: verifies required resources exist, secret payload schema is valid, and ingress/persistence/audit mappings are configured.
 
 ## Provisioned resources (Story 1 plan contract)
 
@@ -44,6 +44,14 @@ Secret values are generated during bootstrap (no placeholder key material).
 - Bootstrap behavior is idempotent: it reuses existing mapping and enforces expected config.
 
 `thesis-persistence` must already exist in LocalStack before running `bootstrap.py`.
+
+## Story 10 audit wiring
+
+- Event source mapping: `thesis-rejected-events -> thesis-audit`
+- Mapping config: `BatchSize=1`, `Enabled=true`
+- Bootstrap behavior is idempotent: it reuses existing mapping and enforces expected config.
+
+`thesis-audit` must already exist in LocalStack before running `bootstrap.py`.
 
 ## Quick start
 

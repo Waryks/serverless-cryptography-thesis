@@ -32,8 +32,11 @@ INGRESS_QUEUE_NAME = "thesis-ingress-events"
 VALIDATION_FUNCTION_NAME = "thesis-validation"
 ACCEPTED_QUEUE_NAME = "thesis-accepted-events"
 PERSISTENCE_FUNCTION_NAME = "thesis-persistence"
+REJECTED_QUEUE_NAME = "thesis-rejected-events"
+AUDIT_FUNCTION_NAME = "thesis-audit"
 INGRESS_MAPPING_BATCH_SIZE = 1
 ACCEPTED_MAPPING_BATCH_SIZE = 1
+REJECTED_MAPPING_BATCH_SIZE = 1
 
 TABLE_NAMES = [
     "thesis_ledger",
@@ -319,6 +322,16 @@ def bootstrap_resources(config: Config, clients: dict[str, Any]) -> None:
         ACCEPTED_MAPPING_BATCH_SIZE,
     )
     print(f"  - {ACCEPTED_QUEUE_NAME} -> {PERSISTENCE_FUNCTION_NAME}: {_mapping_summary(mapping)}")
+
+    print("- Ensuring rejected SQS -> audit Lambda wiring")
+    mapping = ensure_event_source_mapping(
+        clients["lambda"],
+        clients["sqs"],
+        REJECTED_QUEUE_NAME,
+        AUDIT_FUNCTION_NAME,
+        REJECTED_MAPPING_BATCH_SIZE,
+    )
+    print(f"  - {REJECTED_QUEUE_NAME} -> {AUDIT_FUNCTION_NAME}: {_mapping_summary(mapping)}")
 
 
 def main() -> int:

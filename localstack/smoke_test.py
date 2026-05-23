@@ -144,6 +144,51 @@ def validate_accepted_mapping(lambda_client: Any, sqs_client: Any) -> list[str]:
     return failures
 
 
+def validate_rejected_mapping(lambda_client: Any, sqs_client: Any) -> list[str]:
+    failures: list[str] = []
+    try:
+        lambda_client.get_function(FunctionName=bootstrap.AUDIT_FUNCTION_NAME)
+    except ClientError as error:
+        code = error.response.get("Error", {}).get("Code")
+        failures.append(
+            f"audit lambda missing: {bootstrap.AUDIT_FUNCTION_NAME} ({code})"
+        )
+        return failures
+
+    try:
+        queue_url = sqs_client.get_queue_url(QueueName=bootstrap.REJECTED_QUEUE_NAME)["QueueUrl"]
+        queue_arn = sqs_client.get_queue_attributes(
+            QueueUrl=queue_url,
+            AttributeNames=["QueueArn"],
+        )["Attributes"]["QueueArn"]
+    except ClientError as error:
+        code = error.response.get("Error", {}).get("Code")
+        failures.append(f"rejected queue lookup failed: {bootstrap.REJECTED_QUEUE_NAME} ({code})")
+        return failures
+
+    response = lambda_client.list_event_source_mappings(
+        FunctionName=bootstrap.AUDIT_FUNCTION_NAME,
+        EventSourceArn=queue_arn,
+    )
+    mappings = [m for m in response.get("EventSourceMappings", []) if m.get("State") != "Deleting"]
+    if not mappings:
+        failures.append(
+            f"missing mapping: {bootstrap.REJECTED_QUEUE_NAME} -> {bootstrap.AUDIT_FUNCTION_NAME}"
+        )
+        return failures
+
+    mapping = mappings[0]
+    if mapping.get("BatchSize") != bootstrap.REJECTED_MAPPING_BATCH_SIZE:
+        failures.append(
+            "mapping batch size mismatch: "
+            f"expected={bootstrap.REJECTED_MAPPING_BATCH_SIZE} actual={mapping.get('BatchSize')}"
+        )
+    if mapping.get("State") != "Enabled":
+        failures.append(f"mapping not enabled: state={mapping.get('State')}")
+
+    return failures
+
+
 def main() -> int:
     config = bootstrap.load_config()
     print(f"Running smoke test for endpoint={config.endpoint_url}, region={config.aws_region}")
@@ -167,6 +212,7 @@ def main() -> int:
 
     failures.extend(validate_ingress_mapping(clients["lambda"], clients["sqs"]))
     failures.extend(validate_accepted_mapping(clients["lambda"], clients["sqs"]))
+    failures.extend(validate_rejected_mapping(clients["lambda"], clients["sqs"]))
 
     if failures:
         print("Smoke test failed:")
