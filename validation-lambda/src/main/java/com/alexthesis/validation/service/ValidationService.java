@@ -13,6 +13,9 @@ import com.alexthesis.validation.policy.PolicyEngine;
 import com.alexthesis.validation.policy.PolicyValidationResult;
 import com.alexthesis.validation.policy.SecurityPolicy;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.alexthesis.metrics.ColdStartTracker;
+import com.alexthesis.metrics.MetricsContext;
+import com.alexthesis.metrics.TimingStage;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -98,6 +101,7 @@ public class ValidationService {
     }
 
     private ValidationDecision decide(String messageBodyJson) {
+        // Create a metrics context if we can determine an eventId during deserialization.
         SignedEvent event = deserializeEvent(messageBodyJson);
         if (event == null || event.content() == null) {
             return ValidationDecision.rejected(null, AuditReason.DESERIALIZATION_ERROR, "Failed to deserialize event");
@@ -105,48 +109,90 @@ public class ValidationService {
 
         SignedContent content = event.content();
 
-        String structureError = validateStructure(content, event.signatureB64());
-        if (structureError != null) {
-            return ValidationDecision.rejected(event, AuditReason.DESERIALIZATION_ERROR, structureError);
-        }
+        MetricsContext ctx = MetricsContext.create("validation", content.eventId(), ColdStartTracker.isColdStartAndMark("validation"));
+        try (ctx) {
+            ctx.start(TimingStage.LAMBDA_HANDLER);
 
-        PolicyValidationResult policyResult = policyEngine.evaluate(content);
-        if (!policyResult.allowed()) {
-            return ValidationDecision.rejected(event, policyResult.rejectionReason(), policyResult.rejectionMessage());
-        }
-
-        SecurityPolicy policy = policyResult.policy();
-
-        KeySecret secret = secretService.getSecret(content.keyId());
-
-        boolean signatureValid = signatureVerifier.verifySignature(content, event.signatureB64(), secret);
-        if (!signatureValid && policy.allowPreviousKey()) {
-            String previousKeyId = policyEngine.resolvePreviousKeyId(content.keyId());
-            if (!previousKeyId.equals(content.keyId())) {
-                KeySecret previousSecret = secretService.getSecret(previousKeyId);
-                signatureValid = signatureVerifier.verifySignature(content, event.signatureB64(), previousSecret);
+            String structureError = validateStructure(content, event.signatureB64());
+            if (structureError != null) {
+                ctx.stop(TimingStage.LAMBDA_HANDLER);
+                return ValidationDecision.rejected(event, AuditReason.DESERIALIZATION_ERROR, structureError);
             }
-        }
 
-        if (!signatureValid) {
-            return ValidationDecision.rejected(
-                    event,
-                    policy.allowPreviousKey() ? AuditReason.UNKNOWN_KEY : AuditReason.INVALID_SIGNATURE,
-                    policy.allowPreviousKey()
-                            ? "Signature verification failed with current and previous key"
-                            : "Signature verification failed"
-            );
-        }
+            ctx.start(TimingStage.POLICY_LOADING);
+            PolicyValidationResult policyResult = policyEngine.evaluate(content);
+            ctx.stop(TimingStage.POLICY_LOADING);
 
-        if (policy.replayCheckEnabled() && !replayChecker.isWithinReplayWindow(content, policy.replayWindowMs())) {
-            return ValidationDecision.rejected(event, AuditReason.EXPIRED, "Event outside replay window");
-        }
+            if (!policyResult.allowed()) {
+                ctx.stop(TimingStage.LAMBDA_HANDLER);
+                return ValidationDecision.rejected(event, policyResult.rejectionReason(), policyResult.rejectionMessage());
+            }
 
-        if (policy.dedupEnabled() && !dedupStore.isNewEvent(content)) {
-            return ValidationDecision.rejected(event, AuditReason.REPLAY_DETECTED, "Duplicate event detected");
-        }
+            SecurityPolicy policy = policyResult.policy();
 
-        return ValidationDecision.accepted(event);
+            ctx.start(TimingStage.KEY_LOADING);
+            KeySecret secret = secretService.getSecret(content.keyId());
+            ctx.stop(TimingStage.KEY_LOADING);
+
+            ctx.start(TimingStage.SIGNATURE_VERIFICATION);
+            boolean signatureValid = signatureVerifier.verifySignature(content, event.signatureB64(), secret);
+            ctx.stop(TimingStage.SIGNATURE_VERIFICATION);
+
+            if (!signatureValid && policy.allowPreviousKey()) {
+                String previousKeyId = policyEngine.resolvePreviousKeyId(content.keyId());
+                if (!previousKeyId.equals(content.keyId())) {
+                    ctx.start(TimingStage.KEY_LOADING);
+                    KeySecret previousSecret = secretService.getSecret(previousKeyId);
+                    ctx.stop(TimingStage.KEY_LOADING);
+
+                    ctx.start(TimingStage.SIGNATURE_VERIFICATION);
+                    signatureValid = signatureVerifier.verifySignature(content, event.signatureB64(), previousSecret);
+                    ctx.stop(TimingStage.SIGNATURE_VERIFICATION);
+                }
+            }
+
+            if (!signatureValid) {
+                ctx.stop(TimingStage.LAMBDA_HANDLER);
+                return ValidationDecision.rejected(
+                        event,
+                        policy.allowPreviousKey() ? AuditReason.UNKNOWN_KEY : AuditReason.INVALID_SIGNATURE,
+                        policy.allowPreviousKey()
+                                ? "Signature verification failed with current and previous key"
+                                : "Signature verification failed"
+                );
+            }
+
+            if (policy.replayCheckEnabled()) {
+                ctx.start(TimingStage.REPLAY_CHECK);
+            }
+            if (policy.replayCheckEnabled() && !replayChecker.isWithinReplayWindow(content, policy.replayWindowMs())) {
+                ctx.stop(TimingStage.REPLAY_CHECK);
+                ctx.stop(TimingStage.LAMBDA_HANDLER);
+                return ValidationDecision.rejected(event, AuditReason.EXPIRED, "Event outside replay window");
+            }
+            if (policy.replayCheckEnabled()) {
+                ctx.stop(TimingStage.REPLAY_CHECK);
+            }
+
+            if (policy.dedupEnabled()) {
+                ctx.start(TimingStage.DEDUP_CHECK);
+            }
+            if (policy.dedupEnabled() && !dedupStore.isNewEvent(content)) {
+                ctx.stop(TimingStage.DEDUP_CHECK);
+                ctx.stop(TimingStage.LAMBDA_HANDLER);
+                return ValidationDecision.rejected(event, AuditReason.REPLAY_DETECTED, "Duplicate event detected");
+            }
+            if (policy.dedupEnabled()) {
+                ctx.stop(TimingStage.DEDUP_CHECK);
+            }
+
+            ctx.stop(TimingStage.LAMBDA_HANDLER);
+
+            // Emit snapshot to logs for collection
+            ctx.snapshot().ifPresent(s -> System.out.println(s.toJson()));
+
+            return ValidationDecision.accepted(event);
+        }
     }
 
     /**

@@ -6,6 +6,9 @@ import com.alexthesis.crypto.SignatureService;
 import com.alexthesis.events.EventPublisher;
 import com.alexthesis.messaging.SignedContent;
 import com.alexthesis.messaging.SignedEvent;
+import com.alexthesis.metrics.ColdStartTracker;
+import com.alexthesis.metrics.MetricsContext;
+import com.alexthesis.metrics.TimingStage;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
@@ -22,7 +25,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @ApplicationScoped
 public class ProducerService {
 
-    private static final AtomicBoolean COLDSTART_FLAG = new AtomicBoolean(true);
     private static final long NS_PER_MS = 1_000_000L;
 
     private final EventPublisher publisher;
@@ -52,24 +54,49 @@ public class ProducerService {
      *         total processing duration in milliseconds
      */
     public ProducerResponse processEvent(SignedEvent inputSignedEvent) {
-        boolean isColdStart = COLDSTART_FLAG.getAndSet(false);
+        String eventId = inputSignedEvent.content().eventId();
+        boolean isColdStart = ColdStartTracker.isColdStartAndMark("producer");
+
+        MetricsContext ctx = MetricsContext.create("producer", eventId, isColdStart);
         long startTime = System.nanoTime();
 
-        SignedContent content = inputSignedEvent.content();
-        String signatureB64 = handleSigningContent(content);
+        try (ctx) {
+            ctx.start(TimingStage.LAMBDA_HANDLER);
 
-        publisher.publish(new SignedEvent(content, signatureB64));
+            SignedContent content = inputSignedEvent.content();
 
-        long endTime = System.nanoTime();
-        double durationMs = (endTime - startTime) / (double) NS_PER_MS;
+            ctx.start(TimingStage.KEY_LOADING);
+            KeySecret secret = secretService.getSecret(content.keyId());
+            ctx.stop(TimingStage.KEY_LOADING);
 
-        return new ProducerResponse(content.eventId(), isColdStart, durationMs);
+            ctx.start(TimingStage.CONTENT_SERIALIZATION);
+            // serialization may happen inside signature service, but we mark the logical step
+            ctx.stop(TimingStage.CONTENT_SERIALIZATION);
+
+            ctx.start(TimingStage.SIGNING);
+            String signatureB64 = signatureService.sign(content, secret);
+            ctx.stop(TimingStage.SIGNING);
+
+            ctx.start(TimingStage.SQS_PUBLISH);
+            publisher.publish(new SignedEvent(content, signatureB64));
+            ctx.stop(TimingStage.SQS_PUBLISH);
+
+            ctx.stop(TimingStage.LAMBDA_HANDLER);
+
+            long endTime = System.nanoTime();
+            double durationMs = (endTime - startTime) / (double) NS_PER_MS;
+
+            // Emit timing snapshot to logs so benchmark runner can collect timings from logs.
+            ctx.snapshot().ifPresent(s -> {
+                // log a single-line JSON representation
+                // use logger from this class if needed
+                System.out.println(s.toJson());
+            });
+
+            return new ProducerResponse(content.eventId(), isColdStart, durationMs);
+        }
     }
 
-    private String handleSigningContent(SignedContent content) {
-        KeySecret secret = secretService.getSecret(content.keyId());
-
-        return signatureService.sign(content, secret);
-    }
+    // ... existing helper methods removed; signing is performed inline to allow timing.
 }
 

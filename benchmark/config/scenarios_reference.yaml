@@ -1,0 +1,69 @@
+# Story 14: Scenario Configuration Examples
+# These YAML files demonstrate specific test scenarios for the thesis
+
+# Accepted flow scenario: valid events reach ledger
+name: accepted_flow
+description: "Baseline accepted flow scenario"
+scenario_type: accepted
+expected_outcomes:
+  - ACCEPTED
+
+---
+# Invalid signature scenario: events fail verification
+name: invalid_signature
+description: "Event fails signature verification"
+scenario_type: rejected
+expected_outcomes:
+  - INVALID_SIGNATURE
+
+---
+# Replay attack scenario: old timestamp event is rejected
+name: replay_attack
+description: "Replay protection: same eventId with old timestamp"
+scenario_type: replay
+expected_outcomes:
+  - REPLAY_DETECTED
+replay_window_ms: 300000
+
+---
+# Duplicate scenario: repeated eventId is rejected
+name: duplicate_event
+description: "Deduplication: same eventId within replay window"
+scenario_type: duplicate
+expected_outcomes:
+  - REPLAY_DETECTED
+dedup_enabled: true
+
+---
+# Rotation scenario: validation succeeds using previous key
+name: key_rotation
+description: "Key rotation: accept events signed with previous key"
+scenario_type: accepted
+expected_outcomes:
+  - ACCEPTED
+rotation_mode: current_and_previous
+
+---
+# Cold start comparison scenario: cold vs warm invocations
+name: cold_start_comparison
+description: "Compare cold and warm invocation latencies"
+scenario_type: accepted
+expected_outcomes:
+  - ACCEPTED
+cold_start_modes:
+  - per_iteration
+  - none
+
+---
+# Combined scenario: algorithm comparison across all modes
+name: algorithm_comparison
+description: "Compare HMAC, RSA, and ECDSA across cold/warm"
+scenario_type: accepted
+algorithms:
+  - HMAC_SHA256
+  - RSA_PSS_SHA256
+  - ECDSA_P256_SHA256
+cold_start_modes:
+  - per_iteration
+  - none
+

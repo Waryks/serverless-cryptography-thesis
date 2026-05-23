@@ -1,0 +1,424 @@
+# Story 14: Enhanced Experiment Configuration
+# This YAML file demonstrates all configurable options available for experiments
+# Including algorithms, payload sizes, cache modes, rotation modes, replay/dedup options, cold/warm modes
+
+# Configuration schema:
+#   name: unique experiment identifier
+#   description: human-readable description
+#   scenario: accepted, rejected, replay, duplicate, expired
+#   algorithm: HMAC_SHA256, RSA_PSS_SHA256, ECDSA_P256_SHA256
+#   payload_size: small, medium, large
+#   iterations: number of times to execute
+#   expected_outcome: ACCEPTED, REJECTED
+#   cold_start_mode: none, per_iteration, per_experiment, idle_wait
+#   cache_enabled: true/false - enable secret/key caching
+#   rotation_mode: current_only, current_and_previous
+#   replay_enabled: true/false - enable replay protection
+#   dedup_enabled: true/false - enable deduplication
+#   execution_mode: sequential, concurrent
+#   completion_timeout_seconds: max wait for Lambda completion
+#   poll_seconds: polling interval for ledger/audit checks
+#   replay_window_ms: time window for replay detection (5 min default)
+
+experiments:
+  # ==========================================
+  # Baseline Accepted Flow - Cold Start Tests
+  # ==========================================
+  - name: baseline_hmac_cold
+    description: "HMAC baseline with cold start per iteration"
+    scenario: accepted
+    algorithm: HMAC_SHA256
+    payload_size: small
+    iterations: 5
+    expected_outcome: ACCEPTED
+    cold_start_mode: per_iteration
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: baseline_rsa_cold
+    description: "RSA baseline with cold start per iteration"
+    scenario: accepted
+    algorithm: RSA_PSS_SHA256
+    payload_size: small
+    iterations: 5
+    expected_outcome: ACCEPTED
+    cold_start_mode: per_iteration
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: baseline_ecdsa_cold
+    description: "ECDSA baseline with cold start per iteration"
+    scenario: accepted
+    algorithm: ECDSA_P256_SHA256
+    payload_size: small
+    iterations: 5
+    expected_outcome: ACCEPTED
+    cold_start_mode: per_iteration
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  # ==========================================
+  # Warm Invocation Tests (No Cold Start)
+  # ==========================================
+  - name: warm_hmac_50
+    description: "HMAC warm invocations baseline"
+    scenario: accepted
+    algorithm: HMAC_SHA256
+    payload_size: small
+    iterations: 50
+    expected_outcome: ACCEPTED
+    cold_start_mode: none
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: warm_rsa_50
+    description: "RSA warm invocations baseline"
+    scenario: accepted
+    algorithm: RSA_PSS_SHA256
+    payload_size: small
+    iterations: 50
+    expected_outcome: ACCEPTED
+    cold_start_mode: none
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: warm_ecdsa_50
+    description: "ECDSA warm invocations baseline"
+    scenario: accepted
+    algorithm: ECDSA_P256_SHA256
+    payload_size: small
+    iterations: 50
+    expected_outcome: ACCEPTED
+    cold_start_mode: none
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  # ==========================================
+  # Payload Size Variation Tests
+  # ==========================================
+  - name: payload_hmac_small
+    description: "HMAC with small payloads"
+    scenario: accepted
+    algorithm: HMAC_SHA256
+    payload_size: small
+    iterations: 10
+    expected_outcome: ACCEPTED
+    cold_start_mode: none
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: payload_hmac_medium
+    description: "HMAC with medium payloads"
+    scenario: accepted
+    algorithm: HMAC_SHA256
+    payload_size: medium
+    iterations: 10
+    expected_outcome: ACCEPTED
+    cold_start_mode: none
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: payload_hmac_large
+    description: "HMAC with large payloads"
+    scenario: accepted
+    algorithm: HMAC_SHA256
+    payload_size: large
+    iterations: 10
+    expected_outcome: ACCEPTED
+    cold_start_mode: none
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  # ==========================================
+  # Replay Protection Tests
+  # ==========================================
+  - name: replay_hmac
+    description: "HMAC replay attack detection"
+    scenario: replay
+    algorithm: HMAC_SHA256
+    payload_size: small
+    iterations: 3
+    expected_outcome: REJECTED
+    cold_start_mode: none
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    replay_window_ms: 300000
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: replay_rsa
+    description: "RSA replay attack detection"
+    scenario: replay
+    algorithm: RSA_PSS_SHA256
+    payload_size: small
+    iterations: 3
+    expected_outcome: REJECTED
+    cold_start_mode: none
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    replay_window_ms: 300000
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: replay_ecdsa
+    description: "ECDSA replay attack detection"
+    scenario: replay
+    algorithm: ECDSA_P256_SHA256
+    payload_size: small
+    iterations: 3
+    expected_outcome: REJECTED
+    cold_start_mode: none
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    replay_window_ms: 300000
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  # ==========================================
+  # Duplicate Detection Tests
+  # ==========================================
+  - name: duplicate_hmac
+    description: "HMAC duplicate event detection"
+    scenario: duplicate
+    algorithm: HMAC_SHA256
+    payload_size: small
+    iterations: 3
+    expected_outcome: REJECTED
+    cold_start_mode: none
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: duplicate_rsa
+    description: "RSA duplicate event detection"
+    scenario: duplicate
+    algorithm: RSA_PSS_SHA256
+    payload_size: small
+    iterations: 3
+    expected_outcome: REJECTED
+    cold_start_mode: none
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: duplicate_ecdsa
+    description: "ECDSA duplicate event detection"
+    scenario: duplicate
+    algorithm: ECDSA_P256_SHA256
+    payload_size: small
+    iterations: 3
+    expected_outcome: REJECTED
+    cold_start_mode: none
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  # ==========================================
+  # Expired Event Tests (Outside Replay Window)
+  # ==========================================
+  - name: expired_hmac
+    description: "HMAC expired event (outside replay window)"
+    scenario: expired
+    algorithm: HMAC_SHA256
+    payload_size: small
+    iterations: 3
+    expected_outcome: REJECTED
+    cold_start_mode: none
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    replay_window_ms: 300000
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: expired_rsa
+    description: "RSA expired event (outside replay window)"
+    scenario: expired
+    algorithm: RSA_PSS_SHA256
+    payload_size: small
+    iterations: 3
+    expected_outcome: REJECTED
+    cold_start_mode: none
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    replay_window_ms: 300000
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: expired_ecdsa
+    description: "ECDSA expired event (outside replay window)"
+    scenario: expired
+    algorithm: ECDSA_P256_SHA256
+    payload_size: small
+    iterations: 3
+    expected_outcome: REJECTED
+    cold_start_mode: none
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    replay_window_ms: 300000
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  # ==========================================
+  # Smoke Test (Quick Validation)
+  # ==========================================
+  - name: smoke_test
+    description: "Quick validation smoke test"
+    scenario: accepted
+    algorithm: HMAC_SHA256
+    payload_size: small
+    iterations: 1
+    expected_outcome: ACCEPTED
+    cold_start_mode: none
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  # ==========================================
+  # NEW: Cache Comparison Tests
+  # ==========================================
+  - name: cache_disabled_hmac_cold
+    description: "HMAC with cache disabled (cold)"
+    scenario: accepted
+    algorithm: HMAC_SHA256
+    payload_size: small
+    iterations: 5
+    expected_outcome: ACCEPTED
+    cold_start_mode: per_iteration
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: cache_enabled_hmac_cold
+    description: "HMAC with cache enabled (cold)"
+    scenario: accepted
+    algorithm: HMAC_SHA256
+    payload_size: small
+    iterations: 5
+    expected_outcome: ACCEPTED
+    cold_start_mode: per_iteration
+    cache_enabled: true
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  # ==========================================
+  # NEW: Key Rotation Tests
+  # ==========================================
+  - name: rotation_current_only_hmac
+    description: "HMAC with current key only (no rotation)"
+    scenario: accepted
+    algorithm: HMAC_SHA256
+    payload_size: small
+    iterations: 10
+    expected_outcome: ACCEPTED
+    cold_start_mode: none
+    cache_enabled: false
+    rotation_mode: current_only
+    replay_enabled: true
+    dedup_enabled: true
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: rotation_current_and_previous_hmac
+    description: "HMAC with current and previous key (rotation support)"
+    scenario: accepted
+    algorithm: HMAC_SHA256
+    payload_size: small
+    iterations: 10
+    expected_outcome: ACCEPTED
+    cold_start_mode: none
+    cache_enabled: false
+    rotation_mode: current_and_previous
+    replay_enabled: true
+    dedup_enabled: true
+    execution_mode: sequential
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+

@@ -5,6 +5,9 @@ import com.alexthesis.audit.model.AuditRecord;
 import com.alexthesis.audit.repository.AuditRepository;
 import com.alexthesis.messaging.RejectedEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.alexthesis.metrics.ColdStartTracker;
+import com.alexthesis.metrics.MetricsContext;
+import com.alexthesis.metrics.TimingStage;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -29,9 +32,28 @@ public class AuditService {
 
     public void processMessage(String messageBodyJson) {
         RejectedEvent rejectedEvent = deserializeRejectedEvent(messageBodyJson);
-        AuditRecord record = auditMapper.toAuditRecord(rejectedEvent);
-        auditRepository.save(record);
-        log.infof("eventId=%s auditPersisted=true reason=%s", record.eventId(), record.reason());
+
+        String eventId = rejectedEvent.originalEvent() != null && rejectedEvent.originalEvent().content() != null
+                ? rejectedEvent.originalEvent().content().eventId()
+                : "unknown";
+
+        boolean isColdStart = ColdStartTracker.isColdStartAndMark("audit");
+        try (MetricsContext ctx = MetricsContext.create("audit", eventId, isColdStart)) {
+            ctx.start(TimingStage.LAMBDA_HANDLER);
+
+            ctx.start(TimingStage.AUDIT_MAPPING);
+            AuditRecord record = auditMapper.toAuditRecord(rejectedEvent);
+            ctx.stop(TimingStage.AUDIT_MAPPING);
+
+            ctx.start(TimingStage.AUDIT_WRITE);
+            auditRepository.save(record);
+            ctx.stop(TimingStage.AUDIT_WRITE);
+
+            ctx.stop(TimingStage.LAMBDA_HANDLER);
+            ctx.snapshot().ifPresent(s -> System.out.println(s.toJson()));
+
+            log.infof("eventId=%s auditPersisted=true reason=%s", record.eventId(), record.reason());
+        }
     }
 
     private RejectedEvent deserializeRejectedEvent(String json) {

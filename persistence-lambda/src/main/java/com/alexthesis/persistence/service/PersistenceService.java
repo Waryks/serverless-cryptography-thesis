@@ -6,6 +6,9 @@ import com.alexthesis.persistence.mapping.LedgerMapper;
 import com.alexthesis.persistence.model.LedgerRecord;
 import com.alexthesis.persistence.repository.LedgerRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.alexthesis.metrics.ColdStartTracker;
+import com.alexthesis.metrics.MetricsContext;
+import com.alexthesis.metrics.TimingStage;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -32,9 +35,25 @@ public class PersistenceService {
         SignedEvent event = deserializeEvent(messageBodyJson);
         validateStructure(event);
 
-        LedgerRecord record = ledgerMapper.toLedgerRecord(event);
-        ledgerRepository.save(record);
-        log.infof("eventId=%s persisted=true", record.eventId());
+        String eventId = event.content().eventId();
+        boolean isColdStart = ColdStartTracker.isColdStartAndMark("persistence");
+        try (MetricsContext ctx = MetricsContext.create("persistence", eventId, isColdStart)) {
+            ctx.start(TimingStage.LAMBDA_HANDLER);
+
+            ctx.start(TimingStage.LEDGER_MAPPING);
+            LedgerRecord record = ledgerMapper.toLedgerRecord(event);
+            ctx.stop(TimingStage.LEDGER_MAPPING);
+
+            ctx.start(TimingStage.LEDGER_WRITE);
+            ledgerRepository.save(record);
+            ctx.stop(TimingStage.LEDGER_WRITE);
+
+            ctx.stop(TimingStage.LAMBDA_HANDLER);
+
+            ctx.snapshot().ifPresent(s -> System.out.println(s.toJson()));
+
+            log.infof("eventId=%s persisted=true", record.eventId());
+        }
     }
 
     private SignedEvent deserializeEvent(String messageBodyJson) {
