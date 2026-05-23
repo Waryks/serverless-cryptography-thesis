@@ -1,0 +1,251 @@
+# Benchmark Experiment Configuration
+# This YAML file defines all benchmark experiments for Story 12 implementation
+# Each experiment orchestrates a specific test scenario with configurable parameters
+
+experiments:
+  # ==========================================
+  # Baseline Accepted Flow - Cold Start Tests
+  # ==========================================
+  - name: baseline_hmac_cold
+    scenario: accepted
+    algorithm: HMAC_SHA256
+    payload_size: small
+    policy_mode: default
+    iterations: 5
+    expected_outcome: ACCEPTED
+    cold_start_mode: per_iteration
+    wait_for_completion: true
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: baseline_rsa_cold
+    scenario: accepted
+    algorithm: RSA_PSS_SHA256
+    payload_size: small
+    policy_mode: default
+    iterations: 5
+    expected_outcome: ACCEPTED
+    cold_start_mode: per_iteration
+    wait_for_completion: true
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: baseline_ecdsa_cold
+    scenario: accepted
+    algorithm: ECDSA_P256_SHA256
+    payload_size: small
+    policy_mode: default
+    iterations: 5
+    expected_outcome: ACCEPTED
+    cold_start_mode: per_iteration
+    wait_for_completion: true
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  # ==========================================
+  # Warm Invocation Tests (No Cold Start)
+  # ==========================================
+  - name: warm_hmac_50
+    scenario: accepted
+    algorithm: HMAC_SHA256
+    payload_size: small
+    policy_mode: default
+    iterations: 50
+    expected_outcome: ACCEPTED
+    cold_start_mode: none
+    wait_for_completion: false
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: warm_rsa_50
+    scenario: accepted
+    algorithm: RSA_PSS_SHA256
+    payload_size: small
+    policy_mode: default
+    iterations: 50
+    expected_outcome: ACCEPTED
+    cold_start_mode: none
+    wait_for_completion: false
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: warm_ecdsa_50
+    scenario: accepted
+    algorithm: ECDSA_P256_SHA256
+    payload_size: small
+    policy_mode: default
+    iterations: 50
+    expected_outcome: ACCEPTED
+    cold_start_mode: none
+    wait_for_completion: false
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  # ==========================================
+  # Payload Size Variation Tests
+  # ==========================================
+  - name: payload_hmac_small
+    scenario: accepted
+    algorithm: HMAC_SHA256
+    payload_size: small
+    policy_mode: default
+    iterations: 10
+    expected_outcome: ACCEPTED
+    cold_start_mode: none
+    wait_for_completion: true
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: payload_hmac_medium
+    scenario: accepted
+    algorithm: HMAC_SHA256
+    payload_size: medium
+    policy_mode: default
+    iterations: 10
+    expected_outcome: ACCEPTED
+    cold_start_mode: none
+    wait_for_completion: true
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: payload_hmac_large
+    scenario: accepted
+    algorithm: HMAC_SHA256
+    payload_size: large
+    policy_mode: default
+    iterations: 10
+    expected_outcome: ACCEPTED
+    cold_start_mode: none
+    wait_for_completion: true
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  # ==========================================
+  # Replay Protection Tests
+  # ==========================================
+  - name: replay_hmac
+    scenario: replay
+    algorithm: HMAC_SHA256
+    payload_size: small
+    policy_mode: default
+    iterations: 3
+    expected_outcome: REJECTED
+    replay_window_ms: 300000
+    wait_for_completion: true
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: replay_rsa
+    scenario: replay
+    algorithm: RSA_PSS_SHA256
+    payload_size: small
+    policy_mode: default
+    iterations: 3
+    expected_outcome: REJECTED
+    replay_window_ms: 300000
+    wait_for_completion: true
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: replay_ecdsa
+    scenario: replay
+    algorithm: ECDSA_P256_SHA256
+    payload_size: small
+    policy_mode: default
+    iterations: 3
+    expected_outcome: REJECTED
+    replay_window_ms: 300000
+    wait_for_completion: true
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  # ==========================================
+  # Duplicate Detection Tests
+  # ==========================================
+  - name: duplicate_hmac
+    scenario: duplicate
+    algorithm: HMAC_SHA256
+    payload_size: small
+    policy_mode: default
+    iterations: 3
+    expected_outcome: REJECTED
+    wait_for_completion: true
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: duplicate_rsa
+    scenario: duplicate
+    algorithm: RSA_PSS_SHA256
+    payload_size: small
+    policy_mode: default
+    iterations: 3
+    expected_outcome: REJECTED
+    wait_for_completion: true
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: duplicate_ecdsa
+    scenario: duplicate
+    algorithm: ECDSA_P256_SHA256
+    payload_size: small
+    policy_mode: default
+    iterations: 3
+    expected_outcome: REJECTED
+    wait_for_completion: true
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  # ==========================================
+  # Expired Event Tests (Outside Replay Window)
+  # ==========================================
+  - name: expired_hmac
+    scenario: expired
+    algorithm: HMAC_SHA256
+    payload_size: small
+    policy_mode: default
+    iterations: 3
+    expected_outcome: REJECTED
+    replay_window_ms: 300000
+    wait_for_completion: true
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: expired_rsa
+    scenario: expired
+    algorithm: RSA_PSS_SHA256
+    payload_size: small
+    policy_mode: default
+    iterations: 3
+    expected_outcome: REJECTED
+    replay_window_ms: 300000
+    wait_for_completion: true
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  - name: expired_ecdsa
+    scenario: expired
+    algorithm: ECDSA_P256_SHA256
+    payload_size: small
+    policy_mode: default
+    iterations: 3
+    expected_outcome: REJECTED
+    replay_window_ms: 300000
+    wait_for_completion: true
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
+  # ==========================================
+  # Smoke Test (Quick Validation)
+  # ==========================================
+  - name: smoke_test
+    scenario: accepted
+    algorithm: HMAC_SHA256
+    payload_size: small
+    policy_mode: default
+    iterations: 1
+    expected_outcome: ACCEPTED
+    cold_start_mode: none
+    wait_for_completion: true
+    completion_timeout_seconds: 8.0
+    poll_seconds: 0.25
+
