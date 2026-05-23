@@ -15,7 +15,7 @@ Exercises the full pipeline: **Producer Lambda → Validation Lambda → Accepte
 pip install -r benchmark/requirements.txt
 
 # 2. Run the Story 14 model check
-python3 benchmark/test_story14.py
+python3 benchmark/verify_models.py
 
 # 3. Run a benchmark experiment
 python3 benchmark/runner/benchmark_runner.py --experiment smoke_test

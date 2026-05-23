@@ -244,7 +244,7 @@ Run a cold start benchmark:
 
 ``` bash
 python3 benchmark/runner/benchmark_runner.py --experiment smoke_test
-python3 benchmark/test_story14.py
+python3 benchmark/verify_models.py
 ```
 
 See full details in:
