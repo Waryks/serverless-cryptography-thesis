@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Verification script for the benchmark experiment models.
 
-This replaces the older `test_story14.py` filename with a more professional
-and descriptive name. It performs a lightweight smoke check of the
+This script performs a lightweight smoke check of the
 experiment models and their helpers (fingerprinting, enums, exports).
 """
 
